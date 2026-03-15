@@ -139,6 +139,7 @@ def compute_subperiod_metrics(
 
 def compute_tc_sensitivity(
     signals_df: pd.DataFrame,
+    k: int = 2,
     tc_grid: list = None,
 ) -> pd.DataFrame:
     """
@@ -148,6 +149,7 @@ def compute_tc_sensitivity(
     ----------
     signals_df : output of generate_signals() — must contain Date, Ticker,
                  Signal, Return_NextDay.
+    k          : number of long (and short) positions per day.
     tc_grid    : list of TC values in basis points to evaluate
                  (default: 0, 2, 5, 10, 15, 20, 25, 30).
 
@@ -162,7 +164,7 @@ def compute_tc_sensitivity(
 
     rows = {}
     for tc in tc_grid:
-        port = compute_portfolio_returns(signals_df, tc_bps=tc)
+        port = compute_portfolio_returns(signals_df, tc_bps=tc, k=k)
         m    = compute_metrics(port['Net_Return'])
         rows[tc] = {
             'Sharpe Ratio':          m.get('Sharpe Ratio', np.nan),

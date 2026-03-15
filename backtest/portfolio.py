@@ -3,8 +3,9 @@ backtest/portfolio.py
 Step 8: Daily equal-weighted long-short P&L with transaction costs.
 
 Transaction cost model (Fischer & Krauss 2017):
-  - tc_bps basis points charged per position change (half-turn)
-  - Any signal change (Hold→Long, Long→Short, Short→Hold, etc.) = 1 half-turn
+  - tc_bps basis points charged per half-turn
+  - Each position change affects 1/(2*k) of the total portfolio
+    (2 legs × k positions per leg = 2k active positions)
   - Day 1: all positions are new → full turnover cost on all active positions
 """
 import pandas as pd
@@ -13,12 +14,13 @@ import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from config import TC_BPS
+from config import TC_BPS, K_STOCKS
 
 
 def compute_portfolio_returns(
     signals_df: pd.DataFrame,
     tc_bps: float = TC_BPS,
+    k: int = K_STOCKS,
 ) -> pd.DataFrame:
     """
     Compute daily gross and net portfolio returns for a long-short strategy.
@@ -27,7 +29,10 @@ def compute_portfolio_returns(
       long_ret  = equal-weighted mean return of Long positions
       short_ret = equal-weighted mean return of Short positions
       gross_ret = long_ret - short_ret
-      net_ret   = gross_ret - (number of signal changes) * tc
+      net_ret   = gross_ret - turnover * tc / (2 * k)
+
+    Each position change only affects 1/(2*k) of the portfolio, since
+    we have 2 legs (long + short) with k equal-weight positions each.
 
     Parameters
     ----------
@@ -36,6 +41,8 @@ def compute_portfolio_returns(
         Date, Ticker, Signal ('Long'/'Short'/'Hold'), Return_NextDay.
     tc_bps : float
         Transaction cost per half-turn in basis points (default 5 bps = 0.0005).
+    k : int
+        Number of long (and short) positions per day.
 
     Returns
     -------
@@ -58,7 +65,10 @@ def compute_portfolio_returns(
         # Count position changes vs previous day (each change = one half-turn)
         curr = dict(zip(group['Ticker'], group['Signal']))
         turnover = sum(1 for t, sig in curr.items() if sig != prev_signals.get(t, 'Hold'))
-        net_ret  = gross_ret - turnover * tc
+
+        # Each position change affects 1/(2*k) of the portfolio
+        tc_cost = turnover * tc / (2 * k)
+        net_ret = gross_ret - tc_cost
         prev_signals = curr
 
         daily.append({
@@ -67,7 +77,7 @@ def compute_portfolio_returns(
             'Net_Return':   net_ret,
             'Long_Return':  long_ret,
             'Short_Return': short_ret,
-            'TC':           turnover * tc,
+            'TC':           tc_cost,
             'Turnover':     turnover,
         })
 
@@ -97,7 +107,7 @@ if __name__ == '__main__':
             })
     pred_df  = pd.DataFrame(rows)
     sig_df   = generate_signals(pred_df, k=2)
-    port     = compute_portfolio_returns(sig_df, tc_bps=5)
+    port     = compute_portfolio_returns(sig_df, tc_bps=5, k=2)
 
     print('\nPortfolio daily returns (10 days):')
     print(port.round(6).to_string())

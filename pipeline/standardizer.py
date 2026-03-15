@@ -1,10 +1,9 @@
 """
 pipeline/standardizer.py
-Step 5: Fit-on-train-only StandardScaler helper.
+Step 5: Feature standardization — fit on train only, transform all splits.
 
-CRITICAL anti-leakage rule: the scaler is always fitted exclusively on
-training data. Validation and test sets are only transformed, never used
-to fit. This prevents any future information from contaminating the model.
+Single-stage normalization: StandardScaler fitted on training data,
+then applied to validation and test sets.
 """
 import numpy as np
 from sklearn.preprocessing import StandardScaler

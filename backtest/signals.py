@@ -32,7 +32,7 @@ def generate_signals(
         all four probability columns (Prob_LR, Prob_RF, Prob_XGB, Prob_LSTM)
         or a single column specified via `prob_col`.
     k : int
-        Number of long and short positions per day (default K_STOCKS=2).
+        Number of long and short positions per day (default K_STOCKS).
     prob_col : str or None
         If provided, use this single column as the ranking signal instead
         of computing the 4-model ensemble average. Useful for per-model
@@ -61,14 +61,14 @@ def generate_signals(
         # ── Rank by ensemble probability (descending); stable sort for ties ─
         g = g.sort_values('Prob_ENS', ascending=False, kind='stable').reset_index(drop=True)
 
-        # ── Assign signals ──────────────────────────────────────────────────
+        # ── Assign signals: top-k Long, bottom-k Short, rest Hold ──────────
         g['Signal'] = 'Hold'
 
-        long_k  = min(k, n // 2)          # guard: can't long > half the stocks
+        long_k  = min(k, n // 2)
         short_k = min(k, n // 2)
 
-        g.loc[:long_k - 1, 'Signal']    = 'Long'
-        g.loc[n - short_k:, 'Signal']   = 'Short'
+        g.loc[:long_k - 1, 'Signal'] = 'Long'
+        g.loc[n - short_k:, 'Signal'] = 'Short'
 
         results.append(g)
 

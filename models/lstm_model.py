@@ -12,6 +12,7 @@ Architecture:
   → scalar probability of outperforming the cross-sectional median
 """
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -34,8 +35,11 @@ class StockSequenceDataset(Dataset):
     Each sequence is shape (SEQ_LEN, n_features).  The corresponding label is
     the Target value at the _last_ row of the window (position i in the ticker).
 
-    Critically, rows 0..SEQ_LEN-1 per ticker cannot form a full window and are
-    skipped — so predictions are only available for a subset of df_ts rows.
+    For inference, pass `context_df` (e.g. the last SEQ_LEN rows of validation
+    data per ticker) so that even the first test rows have a full lookback
+    window. Only test-period rows produce output keys — context rows are used
+    purely for feature history.
+
     The `keys` attribute stores (Date, Ticker) for every sequence so predictions
     can be aligned back to the original DataFrame in main.py.
     """
@@ -47,24 +51,46 @@ class StockSequenceDataset(Dataset):
         target_col: str,
         seq_len: int = SEQ_LEN,
         tickers=None,
+        skip_nan_targets: bool = True,
+        context_df=None,
     ):
         self.seq_len = seq_len
         sequences, labels, keys = [], [], []
 
         tickers = tickers if tickers is not None else data_df['Ticker'].unique()
         for ticker in tickers:
+            # Build per-ticker data, optionally prepending context rows
             stock = (
                 data_df[data_df['Ticker'] == ticker]
                 .sort_values('Date')
                 .reset_index(drop=True)
             )
+            n_test = len(stock)
+
+            if context_df is not None:
+                ctx = (
+                    context_df[context_df['Ticker'] == ticker]
+                    .sort_values('Date')
+                    .tail(seq_len)
+                    .reset_index(drop=True)
+                )
+                n_ctx = len(ctx)
+                stock = pd.concat([ctx, stock], ignore_index=True)
+            else:
+                n_ctx = 0
+
             X     = stock[feature_cols].values.astype(np.float32)
             y     = stock[target_col].values.astype(np.float32)
             dates = stock['Date'].values
 
             for i in range(seq_len, len(X)):
+                # Only emit sequences for actual data rows (not context)
+                if i < n_ctx:
+                    continue
+                if skip_nan_targets and np.isnan(y[i]):
+                    continue
                 sequences.append(X[i - seq_len : i])   # shape (seq_len, n_features)
-                labels.append(y[i])
+                labels.append(y[i] if not np.isnan(y[i]) else 0.0)
                 keys.append((dates[i], ticker))         # for alignment in main.py
 
         self.sequences = torch.tensor(np.array(sequences), dtype=torch.float32)   # (N, seq_len, n_feat)

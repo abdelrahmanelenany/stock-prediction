@@ -23,13 +23,13 @@ from pipeline.walk_forward import generate_walk_forward_folds, print_fold_summar
 from pipeline.standardizer import standardize_fold
 from models.baselines      import train_logistic, train_random_forest, train_xgboost
 from models.lstm_model     import StockLSTM, StockSequenceDataset, train_lstm, lstm_predict
-from models.ensemble       import ensemble_predict
 from backtest.signals      import generate_signals
 from backtest.portfolio    import compute_portfolio_returns
 from backtest.metrics      import (
     compute_metrics, evaluate_classification,
     compute_subperiod_metrics, compute_tc_sensitivity,
 )
+from sklearn.metrics import roc_auc_score
 from config import (
     TRAIN_DAYS, VAL_DAYS, TEST_DAYS,
     SEQ_LEN, N_TOTAL_FEATURES,
@@ -67,8 +67,8 @@ def align_lstm_predictions(
     """
     Map LSTM output (aligned to dataset keys) back to all rows of df_ts.
 
-    Rows that had no LSTM sequence (first SEQ_LEN rows per ticker per fold)
-    receive np.nan and are dropped before signal generation.
+    With context_df provided to StockSequenceDataset, all test rows should
+    have predictions. Any remaining NaN indicates a data gap.
     """
     prob_map = {
         (pd.Timestamp(date).strftime('%Y-%m-%d'), ticker): float(prob)
@@ -120,32 +120,6 @@ def main(load_cached: bool = True):
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
 
-    # ── LSTM pre-training diagnostic (runs once before any fold) ─────────────
-    print('\n-- LSTM Pre-training Diagnostic --')
-    _f0      = folds[0]
-    _df_diag = data[data['Date'].isin(dates[_f0['train'][0]:_f0['train'][1]])]
-    _X_diag, _, _, _ = standardize_fold(
-        _df_diag[FEATURE_COLS].values,
-        _df_diag[FEATURE_COLS].values,
-        _df_diag[FEATURE_COLS].values,
-    )
-    _diag_ds     = StockSequenceDataset(
-        scaled_df(_df_diag, _X_diag), FEATURE_COLS, TARGET_COL, SEQ_LEN
-    )
-    _diag_loader = DataLoader(_diag_ds, batch_size=LSTM_BATCH, shuffle=False,
-                              num_workers=0)
-    _X_batch, _  = next(iter(_diag_loader))
-    print(f'  LSTM device   : {lstm_device}')
-    print(f'  Sequence dtype: {_X_batch.dtype}')
-    _diag_model = StockLSTM(input_size=N_TOTAL_FEATURES).to(lstm_device)
-    _dummy_in   = torch.randn(64, SEQ_LEN, N_TOTAL_FEATURES).to(lstm_device)
-    _t0_diag    = time.perf_counter()
-    with torch.no_grad():
-        _diag_model(_dummy_in)
-    print(f'  Dummy fwd pass: {(time.perf_counter() - _t0_diag)*1000:.2f} ms (batch=64)')
-    del _diag_model, _dummy_in, _diag_loader, _diag_ds, _df_diag, _X_diag
-    print()
-
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"="*60}')
         print(f'FOLD {fold["fold"]}  '
@@ -163,28 +137,30 @@ def main(load_cached: bool = True):
               f'Val: {len(df_v):>5} rows | '
               f'Test: {len(df_ts):>5} rows')
 
-        X_tr, X_v, X_ts, _ = standardize_fold(
+        # ── Standardize (fit on train only) ─────────────────────────────────
+        X_tr_s, X_v_s, X_ts_s, _ = standardize_fold(
             df_tr[FEATURE_COLS].values,
             df_v[FEATURE_COLS].values,
             df_ts[FEATURE_COLS].values,
         )
-        y_tr = df_tr[TARGET_COL].values
-        y_v  = df_v[TARGET_COL].values
+
+        y_tr = df_tr[TARGET_COL].values.astype(int)
+        y_v  = df_v[TARGET_COL].values.astype(int)
 
         # ── Baselines ────────────────────────────────────────────────────────
         t0 = time.time()
         print('\n-- Logistic Regression --')
-        lr_m = train_logistic(X_tr, y_tr)
+        lr_m = train_logistic(X_tr_s, y_tr)
         print(f'  done in {time.time()-t0:.1f}s')
 
         t0 = time.time()
         print('-- Random Forest --')
-        rf_m = train_random_forest(X_tr, y_tr)
+        rf_m = train_random_forest(X_tr_s, y_tr, X_v_s, y_v)
         print(f'  done in {time.time()-t0:.1f}s')
 
         t0 = time.time()
         print('-- XGBoost --')
-        xgb_m = train_xgboost(X_tr, y_tr, X_v, y_v)
+        xgb_m = train_xgboost(X_tr_s, y_tr, X_v_s, y_v)
         print(f'  done in {time.time()-t0:.1f}s')
 
         # ── LSTM ─────────────────────────────────────────────────────────────
@@ -192,12 +168,19 @@ def main(load_cached: bool = True):
         print('-- LSTM (CPU) --')
         lstm_m = StockLSTM(input_size=N_TOTAL_FEATURES)
 
+        df_tr_scaled = scaled_df(df_tr, X_tr_s)
+        df_v_scaled  = scaled_df(df_v, X_v_s)
+        df_ts_scaled = scaled_df(df_ts, X_ts_s)
+
         train_loader = DataLoader(
-            StockSequenceDataset(scaled_df(df_tr, X_tr), FEATURE_COLS, TARGET_COL, SEQ_LEN),
+            StockSequenceDataset(df_tr_scaled, FEATURE_COLS, TARGET_COL, SEQ_LEN),
             batch_size=LSTM_BATCH, shuffle=True, num_workers=0,
         )
         val_loader = DataLoader(
-            StockSequenceDataset(scaled_df(df_v, X_v), FEATURE_COLS, TARGET_COL, SEQ_LEN),
+            StockSequenceDataset(
+                df_v_scaled, FEATURE_COLS, TARGET_COL, SEQ_LEN,
+                context_df=df_tr_scaled,
+            ),
             batch_size=256, shuffle=False, num_workers=0,
         )
 
@@ -211,18 +194,58 @@ def main(load_cached: bool = True):
         fold['val_losses']   = val_losses
 
         # ── LSTM inference + alignment ────────────────────────────────────────
+        # Prepend the last SEQ_LEN days of validation data as context so that
+        # even the first test day has a full lookback window.
         test_ds = StockSequenceDataset(
-            scaled_df(df_ts, X_ts), FEATURE_COLS, TARGET_COL, SEQ_LEN
+            df_ts_scaled, FEATURE_COLS, TARGET_COL, SEQ_LEN,
+            skip_nan_targets=False,
+            context_df=df_v_scaled,
         )
         lstm_probs, lstm_keys = lstm_predict(lstm_m, test_ds, lstm_device)
 
+        # ── Compute validation AUC for ensemble weighting ──────────────
+        val_auc = {}
+        val_auc['LR']  = roc_auc_score(y_v, lr_m.predict_proba(X_v_s)[:, 1])
+        val_auc['RF']  = roc_auc_score(y_v, rf_m.predict_proba(X_v_s)[:, 1])
+        val_auc['XGB'] = roc_auc_score(y_v, xgb_m.predict(xgb.DMatrix(X_v_s)))
+
+        # LSTM validation AUC
+        val_ds_for_auc = StockSequenceDataset(
+            df_v_scaled, FEATURE_COLS, TARGET_COL, SEQ_LEN,
+            context_df=df_tr_scaled,
+        )
+        lstm_val_probs, lstm_val_keys = lstm_predict(lstm_m, val_ds_for_auc, lstm_device)
+        lstm_val_aligned = align_lstm_predictions(lstm_val_probs, lstm_val_keys, df_v)
+        valid_mask = ~np.isnan(lstm_val_aligned)
+        if valid_mask.sum() > 0:
+            val_auc['LSTM'] = roc_auc_score(
+                y_v[valid_mask], lstm_val_aligned[valid_mask]
+            )
+        else:
+            val_auc['LSTM'] = 0.5
+
+        # Weights: only models with AUC > 0.5 contribute
+        raw_weights = {m: max(auc - 0.5, 0.0) for m, auc in val_auc.items()}
+        total_w = sum(raw_weights.values())
+        if total_w > 0:
+            ens_weights = {m: w / total_w for m, w in raw_weights.items()}
+        else:
+            ens_weights = {'LR': 0.25, 'RF': 0.25, 'XGB': 0.25, 'LSTM': 0.25}
+
+        print(f'  Val AUC: { {m: round(a, 4) for m, a in val_auc.items()} }')
+        print(f'  Ensemble weights: { {m: round(w, 3) for m, w in ens_weights.items()} }')
+
         # ── Collect all predictions for this fold ────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
-        pred['Prob_LR']   = lr_m.predict_proba(X_ts)[:, 1]
-        pred['Prob_RF']   = rf_m.predict_proba(X_ts)[:, 1]
-        pred['Prob_XGB']  = xgb_m.predict(xgb.DMatrix(X_ts))
+        pred['Prob_LR']   = lr_m.predict_proba(X_ts_s)[:, 1]
+        pred['Prob_RF']   = rf_m.predict_proba(X_ts_s)[:, 1]
+        pred['Prob_XGB']  = xgb_m.predict(xgb.DMatrix(X_ts_s))
         pred['Prob_LSTM'] = align_lstm_predictions(lstm_probs, lstm_keys, df_ts)
         pred['Fold']      = fold['fold']
+        pred['Fold_W_LR']   = ens_weights['LR']
+        pred['Fold_W_RF']   = ens_weights['RF']
+        pred['Fold_W_XGB']  = ens_weights['XGB']
+        pred['Fold_W_LSTM'] = ens_weights['LSTM']
 
         n_valid = pred['Prob_LSTM'].notna().sum()
         print(f'  LSTM aligned: {n_valid}/{len(pred)} rows '
@@ -231,10 +254,22 @@ def main(load_cached: bool = True):
         all_preds.append(pred)
 
     # ── Combine folds ─────────────────────────────────────────────────────────
-    full_preds  = pd.concat(all_preds).reset_index(drop=True)
-    valid_preds = full_preds.dropna(subset=['Prob_LSTM']).copy()
+    full_preds = pd.concat(all_preds).reset_index(drop=True)
+    # With context_df, LSTM should cover all test rows
+    n_lstm_valid = full_preds['Prob_LSTM'].notna().sum()
     print(f'\nTotal predictions: {len(full_preds)} | '
-          f'With LSTM: {len(valid_preds)}')
+          f'With LSTM: {n_lstm_valid}')
+
+    # Use rows that have all predictions (should be all with context fix)
+    valid_preds = full_preds.dropna(subset=['Prob_LSTM']).copy()
+
+    # Compute validation-weighted ensemble probabilities
+    valid_preds['Prob_ENS_Weighted'] = (
+        valid_preds['Prob_LR']   * valid_preds['Fold_W_LR'] +
+        valid_preds['Prob_RF']   * valid_preds['Fold_W_RF'] +
+        valid_preds['Prob_XGB']  * valid_preds['Fold_W_XGB'] +
+        valid_preds['Prob_LSTM'] * valid_preds['Fold_W_LSTM']
+    )
 
     # ── Steps 7-8: Signals → Portfolio returns (per model + ensemble) ─────────
     print('\n' + '='*60)
@@ -242,11 +277,12 @@ def main(load_cached: bool = True):
     print('='*60)
 
     model_cols = {
-        'LR':       'Prob_LR',
-        'RF':       'Prob_RF',
-        'XGBoost':  'Prob_XGB',
-        'LSTM':     'Prob_LSTM',
-        'Ensemble': None,   # None → average of all four columns
+        'LR':                  'Prob_LR',
+        'RF':                  'Prob_RF',
+        'XGBoost':             'Prob_XGB',
+        'LSTM':                'Prob_LSTM',
+        'Ensemble (equal)':    None,               # equal-weight average
+        'Ensemble (weighted)': 'Prob_ENS_Weighted', # validation-AUC-weighted
     }
 
     port_returns  = {}
@@ -255,7 +291,7 @@ def main(load_cached: bool = True):
     for model_name, prob_col in model_cols.items():
         print(f'\n--- {model_name} ---')
         sig_df = generate_signals(valid_preds, k=K_STOCKS, prob_col=prob_col)
-        port   = compute_portfolio_returns(sig_df, tc_bps=TC_BPS)
+        port   = compute_portfolio_returns(sig_df, tc_bps=TC_BPS, k=K_STOCKS)
         port_returns[model_name] = port
 
         m = compute_metrics(port['Net_Return'])
@@ -289,9 +325,9 @@ def main(load_cached: bool = True):
     print(pd.DataFrame(class_metrics).T.to_string())
 
     print('\n\n' + '='*60)
-    print('TABLE T6 — Sub-Period Performance (Ensemble Net Returns)')
+    print('TABLE T6 — Sub-Period Performance (Weighted Ensemble Net Returns)')
     print('='*60)
-    t6 = compute_subperiod_metrics(port_returns['Ensemble']['Net_Return'])
+    t6 = compute_subperiod_metrics(port_returns['Ensemble (weighted)']['Net_Return'])
     print(t6[['N Days', 'Sharpe Ratio', 'Annualized Return (%)',
               'Max Drawdown (%)']].to_string())
 
@@ -306,4 +342,4 @@ def main(load_cached: bool = True):
 
 
 if __name__ == '__main__':
-    main(load_cached=True)
+    main(load_cached=False)

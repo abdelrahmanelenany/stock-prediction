@@ -10,11 +10,16 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import LAGGED_RETURN_PERIODS
 
-# ── Feature column names (41 total) ────────────────────────────────────────
+# ── Cross-sectional rank features (6 key features ranked across stocks per day)
+RANK_BASE_FEATURES = ['Return_1d', 'Return_5d', 'Return_20d', 'RSI_14', 'Mom_10d', 'Volume_Ratio']
+RANK_COLS = [f'{feat}_Rank' for feat in RANK_BASE_FEATURES]
+
+# ── Feature column names (47 total: 31 returns + 10 technicals + 6 ranks) ────
 FEATURE_COLS = (
     [f'Return_{m}d' for m in LAGGED_RETURN_PERIODS] +
     ['RSI_14', 'MACD', 'MACD_Signal', 'BB_Width', 'BB_PctB',
-     'ATR_14', 'OBV', 'Volume_Ratio', 'HL_Pct_5d', 'Mom_10d']
+     'ATR_14', 'OBV', 'Volume_Ratio', 'HL_Pct_5d', 'Mom_10d'] +
+    RANK_COLS
 )
 TARGET_COL = 'Target'
 
@@ -64,9 +69,11 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     lpc = (df['Low']  - df['Close'].shift()).abs()
     df['ATR_14'] = pd.concat([hl, hpc, lpc], axis=1).max(axis=1).rolling(14).mean()
 
-    # ── OBV ────────────────────────────────────────────────────────────────
+    # ── OBV (20-day rate of change to make it stationary) ─────────────────
     direction = np.sign(df['Close'].diff()).fillna(0)
-    df['OBV'] = (direction * df['Volume']).cumsum()
+    obv_raw = (direction * df['Volume']).cumsum()
+    obv_lag = obv_raw.shift(20)
+    df['OBV'] = (obv_raw - obv_lag) / (obv_lag.abs() + 1)
 
     # ── Volume Ratio ───────────────────────────────────────────────────────
     df['Volume_Ratio'] = df['Volume'] / (df['Volume'].rolling(20).mean() + 1)
@@ -80,13 +87,26 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_cross_sectional_ranks(data: pd.DataFrame) -> pd.DataFrame:
+    """
+    For each date, rank each stock's feature value across all stocks.
+    Uses percentile rank (0 to 1 scale) to produce cross-sectional features
+    that align with the cross-sectional median target.
+    """
+    data = data.copy()
+    for feat in RANK_BASE_FEATURES:
+        data[f'{feat}_Rank'] = data.groupby('Date')[feat].rank(pct=True)
+    return data
+
+
 def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
     """
     Runs the full feature pipeline on the long-format OHLCV DataFrame:
       1. Adds 31 lagged returns
       2. Adds 10 technical indicators per ticker
-      3. Drops rows with any NaN in feature columns
-      4. Saves to data/processed/features.csv
+      3. Adds 6 cross-sectional rank features
+      4. Drops rows with any NaN in feature columns
+      5. Saves to data/processed/features.csv
 
     Returns the enriched DataFrame (Date, Ticker, OHLCV, features...).
     """
@@ -98,6 +118,9 @@ def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
     for ticker, group in data.groupby('Ticker'):
         enriched.append(compute_technical_features(group))
     result = pd.concat(enriched).sort_values(['Date', 'Ticker']).reset_index(drop=True)
+
+    print("Computing cross-sectional rank features...")
+    result = add_cross_sectional_ranks(result)
 
     before = len(result)
     result.dropna(subset=FEATURE_COLS, inplace=True)
