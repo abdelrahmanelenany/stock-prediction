@@ -1,0 +1,11 @@
+# Python cache and local environments
+__pycache__/
+*.py[cod]
+.venv/
+
+# macOS
+.DS_Store
+
+# Generated data and reports (large, nonessential)
+data/
+reports/
