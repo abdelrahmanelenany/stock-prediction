@@ -62,9 +62,19 @@ def compute_portfolio_returns(
         short_ret = shorts['Return_NextDay'].mean() if len(shorts) > 0 else 0.0
         gross_ret = long_ret - short_ret
 
-        # Count position changes vs previous day (each change = one half-turn)
+        # Count half-turns vs previous day
+        # Long↔Short flip = 2 half-turns (close + open), all others = 1
         curr = dict(zip(group['Ticker'], group['Signal']))
-        turnover = sum(1 for t, sig in curr.items() if sig != prev_signals.get(t, 'Hold'))
+        half_turns = 0
+        for t, sig in curr.items():
+            prev = prev_signals.get(t, 'Hold')
+            if sig == prev:
+                continue
+            if prev in ('Long', 'Short') and sig in ('Long', 'Short'):
+                half_turns += 2  # close one side + open the other
+            else:
+                half_turns += 1
+        turnover = half_turns
 
         # Each position change affects 1/(2*k) of the portfolio
         tc_cost = turnover * tc / (2 * k)

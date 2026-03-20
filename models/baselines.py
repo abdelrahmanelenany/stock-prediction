@@ -13,7 +13,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import (
     RF_PARAM_GRID,
-    XGB_MAX_DEPTH, XGB_ETA, XGB_SUBSAMPLE, XGB_COLSAMPLE,
+    XGB_PARAM_GRID, XGB_COLSAMPLE,
     XGB_ROUNDS, XGB_EARLY_STOP, XGB_REG_ALPHA, XGB_REG_LAMBDA,
     RANDOM_SEED,
 )
@@ -83,30 +83,46 @@ def train_xgboost(
     y_val: np.ndarray,
 ) -> xgb.Booster:
     """
-    XGBoost with early stopping on AUC evaluated on the validation set.
-    Uses L1/L2 regularization to prevent overfitting.
-    Returns the best-iteration booster.
+    XGBoost with grid search over XGB_PARAM_GRID.
+    Each combo uses early stopping on validation AUC.
+    Returns the booster with the best validation AUC.
     """
+    from itertools import product
+
     dtrain = xgb.DMatrix(X_train, label=y_train)
     dval   = xgb.DMatrix(X_val,   label=y_val)
-    params = {
-        'max_depth':        XGB_MAX_DEPTH,
-        'eta':              XGB_ETA,
-        'subsample':        XGB_SUBSAMPLE,
-        'colsample_bytree': XGB_COLSAMPLE,
-        'reg_alpha':        XGB_REG_ALPHA,
-        'reg_lambda':       XGB_REG_LAMBDA,
-        'objective':        'binary:logistic',
-        'eval_metric':      'auc',
-        'seed':             RANDOM_SEED,
-    }
-    model = xgb.train(
-        params, dtrain,
-        num_boost_round=XGB_ROUNDS,
-        evals=[(dtrain, 'train'), (dval, 'val')],
-        early_stopping_rounds=XGB_EARLY_STOP,
-        verbose_eval=100,
-    )
-    print(f"  XGB best_iteration={model.best_iteration}  "
-          f"best_val_AUC={model.best_score:.4f}")
-    return model
+
+    best_auc   = -1.0
+    best_model = None
+    best_p     = {}
+
+    keys   = list(XGB_PARAM_GRID.keys())
+    values = list(XGB_PARAM_GRID.values())
+
+    for combo in product(*values):
+        p = dict(zip(keys, combo))
+        params = {
+            'max_depth':        p['max_depth'],
+            'eta':              p['eta'],
+            'subsample':        p['subsample'],
+            'colsample_bytree': XGB_COLSAMPLE,
+            'reg_alpha':        XGB_REG_ALPHA,
+            'reg_lambda':       XGB_REG_LAMBDA,
+            'objective':        'binary:logistic',
+            'eval_metric':      'auc',
+            'seed':             RANDOM_SEED,
+        }
+        model = xgb.train(
+            params, dtrain,
+            num_boost_round=XGB_ROUNDS,
+            evals=[(dval, 'val')],
+            early_stopping_rounds=XGB_EARLY_STOP,
+            verbose_eval=0,
+        )
+        if model.best_score > best_auc:
+            best_auc   = model.best_score
+            best_model = model
+            best_p     = p
+
+    print(f"  XGB best params={best_p}  val AUC={best_auc:.4f}")
+    return best_model
