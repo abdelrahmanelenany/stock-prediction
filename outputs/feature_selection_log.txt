@@ -1,0 +1,6 @@
+Correlation threshold: 0.8
+Original features (8): ['Return_1d', 'RSI_14', 'MACD', 'ATR_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
+
+Dropped features (1): ['BB_PctB']
+
+Retained features (7): ['Return_1d', 'RSI_14', 'MACD', 'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']

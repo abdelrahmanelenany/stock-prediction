@@ -3,11 +3,17 @@ main.py — Full pipeline orchestrator
 Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-A, LSTM-B.
 
 Models after refactor:
-  - LR:      Logistic Regression (baseline)
-  - RF:      Random Forest (baseline)
-  - XGBoost: XGBoost (baseline)
-  - LSTM-A:  Paper-faithful (1 feature, seq_len=240) per Fischer & Krauss 2017
-  - LSTM-B:  Extended ablation (6 features, seq_len=60)
+  - LR:      Logistic Regression (baseline) — 6 features
+  - RF:      Random Forest (baseline) — 6 features
+  - XGBoost: XGBoost (baseline) — 6 features
+  - LSTM-A:  Bhandari-inspired (4 technical features, tuned architecture)
+  - LSTM-B:  Extended ablation (6 features, fixed architecture)
+
+Implements Bhandari et al. (2022) extensions:
+  - Dual scalers: separate feature normalization for LSTM-A (4 features) and
+    LSTM-B/baselines (6 features)
+  - Optional LSTM hyperparameter tuning (Phase 1 + Phase 2 for LSTM-A)
+  - Configurable scaler type (standard/minmax)
 
 Run:
     .venv/bin/python3 main.py
@@ -32,6 +38,7 @@ from models.lstm_model import (
     prepare_lstm_a_sequences, prepare_lstm_b_sequences,
     train_lstm_a, train_lstm_b,
     predict_lstm, align_predictions_to_df,
+    tune_lstm_hyperparams,
 )
 from backtest.signals import generate_signals
 from backtest.portfolio import compute_portfolio_returns
@@ -39,14 +46,20 @@ from backtest.metrics import (
     compute_metrics, evaluate_classification,
     compute_subperiod_metrics,
 )
+import config
 from config import (
     TRAIN_DAYS, VAL_DAYS, TEST_DAYS,
     K_STOCKS, TC_BPS, MODELS,
     LSTM_A_VAL_SPLIT, LSTM_B_VAL_SPLIT,
-    LSTM_B_FEATURES,
+    LSTM_A_FEATURES, LSTM_B_FEATURES,
+    BASELINE_FEATURE_COLS,
 )
 
 TARGET_COL = 'Target'
+
+# ── Pipeline options ─────────────────────────────────────────────────────────
+ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
+                            # (computationally expensive — ~2-3x slower per fold)
 
 device = (
     torch.device('mps') if torch.backends.mps.is_available()
@@ -63,6 +76,7 @@ def save_all_results(
     results_dict: dict,
     daily_returns_dict: dict,
     signals_dict: pd.DataFrame,
+    tuning_results: list = None,
     reports_dir: str = 'reports'
 ):
     """
@@ -81,6 +95,7 @@ def save_all_results(
             'net_5':  pd.DataFrame same columns,
         }
         signals_dict: pd.DataFrame with all signals
+        tuning_results: list of dicts with tuning results per fold (optional)
         reports_dir: output directory path
     """
     os.makedirs(reports_dir, exist_ok=True)
@@ -105,6 +120,12 @@ def save_all_results(
     if results_dict['subperiod'] is not None:
         results_dict['subperiod'].to_csv(
             f'{reports_dir}/table_T6_subperiod_performance.csv', index=False
+        )
+
+    # LSTM Tuning Results (Bhandari §3.3 Tables)
+    if tuning_results and len(tuning_results) > 0:
+        pd.DataFrame(tuning_results).to_csv(
+            f'{reports_dir}/lstm_tuning_results.csv', index=False
         )
 
     # Raw daily returns
@@ -175,6 +196,8 @@ def main(load_cached: bool = True):
     """
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
+    print(f"LSTM Tuning: {'ENABLED' if ENABLE_LSTM_TUNING else 'DISABLED'}")
+    print(f"Scaler Type: {config.SCALER_TYPE}")
     print("=" * 60)
 
     # ── Steps 1-3: Data ─────────────────────────────────────────────────────
@@ -187,15 +210,26 @@ def main(load_cached: bool = True):
         data = build_feature_matrix(raw)
         data = create_targets(data)
 
+    # Verify required columns
     required = FEATURE_COLS + [TARGET_COL, 'Return_NextDay', 'Date', 'Ticker']
     missing = [c for c in required if c not in data.columns]
     if missing:
         raise ValueError(f'Missing columns in features.csv: {missing}')
 
-    # Verify LSTM-B features are available
+    # Verify LSTM-A features are available (4 features)
+    lstm_a_missing = [c for c in LSTM_A_FEATURES if c not in data.columns]
+    if lstm_a_missing:
+        raise ValueError(f'Missing LSTM-A features: {lstm_a_missing}')
+
+    # Verify LSTM-B features are available (6 features)
     lstm_b_missing = [c for c in LSTM_B_FEATURES if c not in data.columns]
     if lstm_b_missing:
         raise ValueError(f'Missing LSTM-B features: {lstm_b_missing}')
+
+    print(f'\nFeature sets:')
+    print(f'  LSTM-A: {LSTM_A_FEATURES} ({len(LSTM_A_FEATURES)} features)')
+    print(f'  LSTM-B: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
+    print(f'  Baselines (LR/RF/XGB): {BASELINE_FEATURE_COLS} ({len(BASELINE_FEATURE_COLS)} features)')
 
     # ── Step 4: Walk-forward folds ───────────────────────────────────────────
     dates = sorted(data['Date'].unique())
@@ -205,6 +239,7 @@ def main(load_cached: bool = True):
 
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
+    tuning_results = []  # Store tuning results for thesis reporting
 
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"=" * 60}')
@@ -219,11 +254,12 @@ def main(load_cached: bool = True):
               f'Val: {len(df_v):>5} rows | '
               f'Test: {len(df_ts):>5} rows')
 
-        # ── Standardize features for baselines (fit on train only) ──────────
-        X_tr_s, X_v_s, X_ts_s, _ = standardize_fold(
-            df_tr[FEATURE_COLS].values,
-            df_v[FEATURE_COLS].values,
-            df_ts[FEATURE_COLS].values,
+        # ── Scaler B: fit on LSTM-B / baseline features (6 features) ──────
+        # Baselines use the same scaler as LSTM-B for fair comparison
+        X_tr_b_s, X_v_b_s, X_ts_b_s, _ = standardize_fold(
+            df_tr[BASELINE_FEATURE_COLS].values,
+            df_v[BASELINE_FEATURE_COLS].values,
+            df_ts[BASELINE_FEATURE_COLS].values,
         )
 
         y_tr = df_tr[TARGET_COL].values.astype(int)
@@ -232,20 +268,20 @@ def main(load_cached: bool = True):
         # ── Baseline Models ──────────────────────────────────────────────────
         t0 = time.time()
         print('\n  [LR]      fitting...')
-        lr_m = train_logistic(X_tr_s, y_tr)
+        lr_m = train_logistic(X_tr_b_s, y_tr)
         print(f'  [LR]      fit done in {time.time()-t0:.1f}s')
 
         t0 = time.time()
         print('  [RF]      fitting...')
-        rf_m = train_random_forest(X_tr_s, y_tr, X_v_s, y_v)
+        rf_m = train_random_forest(X_tr_b_s, y_tr, X_v_b_s, y_v)
         print(f'  [RF]      fit done in {time.time()-t0:.1f}s')
 
         t0 = time.time()
         print('  [XGBoost] fitting...')
-        xgb_m = train_xgboost(X_tr_s, y_tr, X_v_s, y_v)
+        xgb_m = train_xgboost(X_tr_b_s, y_tr, X_v_b_s, y_v)
         print(f'  [XGBoost] fit done in {time.time()-t0:.1f}s')
 
-        # ── LSTM-A: Paper-faithful (1 feature, seq_len=240) ──────────────────
+        # ── LSTM-A: Bhandari-inspired (4 technical features) ─────────────────
         t0 = time.time()
         print('  [LSTM-A]  building sequences & training...')
 
@@ -259,13 +295,47 @@ def main(load_cached: bool = True):
 
         print(f'    LSTM-A sequences: train={len(X_tr_a)}, test={len(X_te_a)}')
 
+        # Optional: hyperparameter tuning for LSTM-A
+        best_hp_a = None
+        if ENABLE_LSTM_TUNING:
+            print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
+            val_split = int(len(X_tr_a) * (1 - LSTM_A_VAL_SPLIT))
+            best_hp_a = tune_lstm_hyperparams(
+                X_tr_a[:val_split], y_tr_a[:val_split],
+                X_tr_a[val_split:], y_tr_a[val_split:],
+                input_size=len(LSTM_A_FEATURES),
+                device=device,
+                arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
+            )
+            tuning_results.append({
+                'fold': fold['fold'],
+                'model': 'LSTM-A',
+                **best_hp_a
+            })
+            print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
+
         # 80/20 split of training sequences into train/val
         val_split = int(len(X_tr_a) * (1 - LSTM_A_VAL_SPLIT))
-        model_a = train_lstm_a(
-            X_tr_a[:val_split], y_tr_a[:val_split],
-            X_tr_a[val_split:], y_tr_a[val_split:],
-            device
-        )
+
+        # Train with tuned or default hyperparameters
+        if best_hp_a:
+            model_a = train_lstm_a(
+                X_tr_a[:val_split], y_tr_a[:val_split],
+                X_tr_a[val_split:], y_tr_a[val_split:],
+                device,
+                optimizer_name=best_hp_a['optimizer'],
+                lr=best_hp_a['lr'],
+                hidden_size=best_hp_a['hidden_size'],
+                num_layers=best_hp_a['num_layers'],
+                dropout=best_hp_a['dropout'],
+                batch_size=best_hp_a['batch_size'],
+            )
+        else:
+            model_a = train_lstm_a(
+                X_tr_a[:val_split], y_tr_a[:val_split],
+                X_tr_a[val_split:], y_tr_a[val_split:],
+                device
+            )
         print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
 
         # LSTM-A inference
@@ -276,7 +346,7 @@ def main(load_cached: bool = True):
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
-        # ── LSTM-B: Extended (6 features, seq_len=60) ────────────────────────
+        # ── LSTM-B: Extended (6 features, fixed architecture) ────────────────
         t0 = time.time()
         print('  [LSTM-B]  building sequences & training...')
 
@@ -304,9 +374,9 @@ def main(load_cached: bool = True):
 
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
-        pred['Prob_LR'] = lr_m.predict_proba(X_ts_s)[:, 1]
-        pred['Prob_RF'] = rf_m.predict_proba(X_ts_s)[:, 1]
-        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_s))
+        pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1]
+        pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1]
+        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s))
         pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts)
         pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts)
         pred['Fold'] = fold['fold']
@@ -452,6 +522,7 @@ def main(load_cached: bool = True):
             'net_5': daily_returns_net_5_df,
         },
         signals_dict=signals_df,
+        tuning_results=tuning_results,
         reports_dir='reports'
     )
 

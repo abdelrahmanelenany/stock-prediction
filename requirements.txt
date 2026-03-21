@@ -10,3 +10,4 @@ seaborn
 plotly
 scipy
 statsmodels
+PyWavelets

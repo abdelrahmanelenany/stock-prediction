@@ -1,23 +1,247 @@
 """
 models/lstm_model.py
-LSTM-A: Paper-faithful replication (Fischer & Krauss 2017) — 1 feature, seq_len=240
-LSTM-B: Extended ablation — 6 curated features, seq_len=60
+LSTM-A: Bhandari-inspired technical indicator LSTM (4 features, tuned architecture)
+LSTM-B: Extended ablation — 6 curated features, fixed architecture (64 units, 2 layers)
 
 Both models output raw logits (2 classes) — use CrossEntropyLoss in training.
 Inference applies softmax to get class probabilities.
+
+Implements Bhandari §3.3 hyperparameter tuning (Section 1 of IMPLEMENTATION_EXTENSIONS.md):
+- Phase 1: tune optimizer, learning rate, batch size
+- Phase 2 (LSTM-A only): tune architecture (hidden_size, num_layers, dropout)
 """
+import itertools
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
 import sys
 import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import config
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Hyperparameter Tuning (Bhandari §3.3)
+# ────────────────────────────────────────────────────────────────────────────
+
+def _build_optimizer(model, name: str, lr: float):
+    """Helper: instantiate optimizer by name string."""
+    params = model.parameters()
+    if name == "adam":
+        return torch.optim.Adam(params, lr=lr, weight_decay=config.LSTM_WD)
+    elif name == "adagrad":
+        return torch.optim.Adagrad(params, lr=lr, weight_decay=config.LSTM_WD)
+    elif name == "nadam":
+        return torch.optim.NAdam(params, lr=lr, weight_decay=config.LSTM_WD)
+    elif name == "rmsprop":
+        return torch.optim.RMSprop(params, lr=lr, weight_decay=config.LSTM_WD)
+    else:
+        raise ValueError(f"Unknown optimizer: {name}")
+
+
+def _run_tuning_replicates(
+    X_train, y_train, X_val, y_val, device,
+    opt_name, lr, bs, input_size, hidden_size, num_layers, dropout,
+    max_epochs, patience,
+):
+    """
+    Run cfg.LSTM_TUNE_REPLICATES independent training runs for one hyperparameter
+    combination. Returns a list of validation AUC scores (one per replicate).
+    """
+    n_replicates = config.LSTM_TUNE_REPLICATES
+    auc_scores = []
+
+    train_ds = TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
+    val_ds = TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val))
+    train_dl = DataLoader(train_ds, batch_size=bs, shuffle=True)
+    val_dl = DataLoader(val_ds, batch_size=bs * 2, shuffle=False)
+
+    for rep in range(n_replicates):
+        model = StockLSTMTunable(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout,
+        ).to(device)
+
+        optimizer = _build_optimizer(model, opt_name, lr)
+        criterion = nn.CrossEntropyLoss()
+
+        best_val_loss, patience_ctr = float("inf"), 0
+        for epoch in range(max_epochs):
+            model.train()
+            for Xb, yb in train_dl:
+                Xb, yb = Xb.to(device), yb.to(device)
+                optimizer.zero_grad()
+                loss = criterion(model(Xb), yb)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+
+            model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for Xb, yb in val_dl:
+                    val_loss += criterion(model(Xb.to(device)), yb.to(device)).item()
+            val_loss /= max(len(val_dl), 1)
+
+            if val_loss < best_val_loss:
+                best_val_loss, patience_ctr = val_loss, 0
+            else:
+                patience_ctr += 1
+                if patience_ctr >= patience:
+                    break
+
+        # Compute AUC on validation set
+        model.eval()
+        all_preds, all_labels = [], []
+        with torch.no_grad():
+            for Xb, yb in val_dl:
+                logits = model(Xb.to(device))
+                probs = torch.softmax(logits, dim=1)[:, 1]
+                all_preds.extend(probs.cpu().numpy())
+                all_labels.extend(yb.numpy())
+
+        if len(set(all_labels)) > 1:
+            auc = roc_auc_score(all_labels, all_preds)
+        else:
+            auc = 0.5
+        auc_scores.append(auc)
+
+    return auc_scores
+
+
+def tune_lstm_hyperparams(
+    X_train, y_train, X_val, y_val,
+    input_size, device,
+    arch_grid=None,
+    seed_hidden=64, seed_layers=2, seed_dropout=0.2,
+):
+    """
+    Bhandari §3.3 Algorithm 1 + Algorithm 2 — adapted for classification
+    (AUC replaces RMSE).
+
+    Phase 1 (always): sweeps (optimizer, lr, batch_size) from config.LSTM_HYPERPARAM_GRID.
+    Phase 2 (when arch_grid is provided): sweeps (hidden_size, num_layers, dropout)
+             from arch_grid, using the best Phase-1 hyperparameters as fixed context.
+             This mirrors Bhandari Algorithm 2, which tunes architecture after fixing
+             the training hyperparameters.
+
+    LSTM-A calls this function with arch_grid=config.LSTM_A_ARCH_GRID.
+    LSTM-B calls this function with arch_grid=None (architecture stays fixed).
+
+    Parameters
+    ----------
+    X_train : np.ndarray
+        Training sequences, shape (N, seq_len, n_features)
+    y_train : np.ndarray
+        Training labels
+    X_val : np.ndarray
+        Validation sequences
+    y_val : np.ndarray
+        Validation labels
+    input_size : int
+        Number of input features
+    device : torch.device
+        Device to train on
+    arch_grid : dict or None
+        If provided, contains hidden_size, num_layers, dropout options to search
+    seed_hidden, seed_layers, seed_dropout : int/float
+        Default architecture to use if arch_grid is None (Phase 1 only)
+
+    Returns
+    -------
+    dict with keys: optimizer, lr, batch_size, hidden_size, num_layers, dropout
+    """
+    # ── Phase 1: tune training hyperparameters ────────────────────────────────
+    grid = config.LSTM_HYPERPARAM_GRID
+    combos = list(itertools.product(
+        grid["optimizer"], grid["learning_rate"], grid["batch_size"]
+    ))
+
+    # For Phase 1, use a fixed architecture seed
+    if arch_grid is not None:
+        p1_hidden = arch_grid["hidden_size"][0]
+        p1_layers = arch_grid["num_layers"][0]
+        p1_drop = arch_grid["dropout"][0]
+    else:
+        p1_hidden = seed_hidden
+        p1_layers = seed_layers
+        p1_drop = seed_dropout
+
+    print(f"[LSTM Tuning - Phase 1] {len(combos)} training combos x "
+          f"{config.LSTM_TUNE_REPLICATES} replicates")
+
+    phase1_results = []
+    for opt_name, lr, bs in combos:
+        auc_scores = _run_tuning_replicates(
+            X_train, y_train, X_val, y_val, device,
+            opt_name, lr, bs, input_size,
+            hidden_size=p1_hidden, num_layers=p1_layers, dropout=p1_drop,
+            max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
+            patience=config.LSTM_TUNE_PATIENCE,
+        )
+        avg_auc = sum(auc_scores) / len(auc_scores)
+        phase1_results.append({
+            "optimizer": opt_name, "lr": lr, "batch_size": bs, "avg_val_auc": avg_auc
+        })
+        print(f"  opt={opt_name:7s}  lr={lr:.4f}  bs={bs:3d}  -> avg AUC={avg_auc:.4f}")
+
+    best_p1 = max(phase1_results, key=lambda x: x["avg_val_auc"])
+    print(f"[Phase 1 best] {best_p1}")
+
+    # If no arch grid, return Phase 1 results with fixed architecture
+    if arch_grid is None:
+        return {
+            "optimizer": best_p1["optimizer"],
+            "lr": best_p1["lr"],
+            "batch_size": best_p1["batch_size"],
+            "hidden_size": seed_hidden,
+            "num_layers": seed_layers,
+            "dropout": seed_dropout,
+        }
+
+    # ── Phase 2: tune architecture (LSTM-A only) ──────────────────────────────
+    arch_combos = list(itertools.product(
+        arch_grid["hidden_size"], arch_grid["num_layers"], arch_grid["dropout"]
+    ))
+    print(f"\n[LSTM Tuning - Phase 2] {len(arch_combos)} architecture combos x "
+          f"{config.LSTM_TUNE_REPLICATES} replicates")
+
+    phase2_results = []
+    for hidden_size, num_layers, dropout in arch_combos:
+        auc_scores = _run_tuning_replicates(
+            X_train, y_train, X_val, y_val, device,
+            best_p1["optimizer"], best_p1["lr"], best_p1["batch_size"], input_size,
+            hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
+            max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
+            patience=config.LSTM_TUNE_PATIENCE,
+        )
+        avg_auc = sum(auc_scores) / len(auc_scores)
+        phase2_results.append({
+            "hidden_size": hidden_size, "num_layers": num_layers,
+            "dropout": dropout, "avg_val_auc": avg_auc
+        })
+        print(f"  h={hidden_size:3d}  layers={num_layers}  drop={dropout:.1f}"
+              f"  -> avg AUC={avg_auc:.4f}")
+
+    best_p2 = max(phase2_results, key=lambda x: x["avg_val_auc"])
+    print(f"[Phase 2 best] {best_p2}")
+
+    return {
+        "optimizer": best_p1["optimizer"],
+        "lr": best_p1["lr"],
+        "batch_size": best_p1["batch_size"],
+        "hidden_size": best_p2["hidden_size"],
+        "num_layers": best_p2["num_layers"],
+        "dropout": best_p2["dropout"],
+    }
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -166,8 +390,8 @@ def _build_sequences_with_lookback(df_combined: pd.DataFrame, seq_len: int,
 
 def prepare_lstm_a_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
     """
-    Builds overlapping sequences of standardized 1-day returns for LSTM-A.
-    Replicates Fischer & Krauss (2017) Section 3.2.1 exactly.
+    Builds overlapping multi-feature sequences for LSTM-A.
+    Uses 4 features: MACD, RSI_14, ATR_14, Return_1d (Bhandari §4.3 inspired).
 
     Standardization is fit on training data ONLY, then applied to both splits.
 
@@ -175,39 +399,37 @@ def prepare_lstm_a_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
     predictions can be made even when test period < seq_len.
 
     Args:
-        df_train: DataFrame with columns [Date, Ticker, Return_1d, Target], training fold only
-        df_test:  DataFrame with same columns, test fold only
+        df_train: DataFrame with columns [Date, Ticker, *LSTM_A_FEATURES, Target]
+        df_test:  DataFrame with same columns
 
     Returns:
-        X_train: np.array shape (N_train, seq_len, 1)
+        X_train: np.array shape (N_train, seq_len, n_feat)
         y_train: np.array shape (N_train,)
-        X_test:  np.array shape (N_test, seq_len, 1)
+        X_test:  np.array shape (N_test, seq_len, n_feat)
         y_test:  np.array shape (N_test,)
-        keys_train: list of (date, ticker) for train alignment
-        keys_test:  list of (date, ticker) for test alignment
+        keys_train: list of (date, ticker)
+        keys_test:  list of (date, ticker)
     """
     seq_len = config.LSTM_A_SEQ_LEN
-    feature_col = config.LSTM_A_FEATURES[0]  # 'Return_1d'
+    feature_cols = config.LSTM_A_FEATURES  # 4 features
 
-    # Fit scaler on training data ONLY
-    mu = df_train[feature_col].mean()
-    sigma = df_train[feature_col].std()
+    # Fit scaler on training data only
+    scaler = StandardScaler()
+    scaler.fit(df_train[feature_cols].values)
 
-    # Standardize both splits using training statistics
     df_train = df_train.copy()
     df_test = df_test.copy()
-    df_train['r_std'] = (df_train[feature_col] - mu) / sigma
-    df_test['r_std'] = (df_test[feature_col] - mu) / sigma
+    df_train[feature_cols] = scaler.transform(df_train[feature_cols].values)
+    df_test[feature_cols] = scaler.transform(df_test[feature_cols].values)
 
     # Build training sequences from train data only
-    X_train, y_train, keys_train = _build_sequences(df_train, seq_len, 'r_std')
+    X_train, y_train, keys_train = _build_sequences_multi(df_train, seq_len, feature_cols)
 
     # Build test sequences using train data as lookback history
-    # Combine last seq_len days of train with all of test for each ticker
     test_dates = set(df_test['Date'].apply(lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')))
     df_combined = pd.concat([df_train, df_test], ignore_index=True)
-    X_test, y_test, keys_test = _build_sequences_with_lookback(
-        df_combined, seq_len, 'r_std', test_dates
+    X_test, y_test, keys_test = _build_sequences_multi_with_lookback(
+        df_combined, seq_len, feature_cols, test_dates
     )
 
     return X_train, y_train, X_test, y_test, keys_train, keys_test
@@ -262,29 +484,71 @@ def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
 # Model Architectures
 # ────────────────────────────────────────────────────────────────────────────
 
-class LSTMModelA(nn.Module):
+class StockLSTMTunable(nn.Module):
     """
-    Paper-faithful LSTM (Fischer & Krauss 2017).
-    Single layer, h=25, input_size=1.
+    Flexible LSTM architecture for hyperparameter tuning.
+    All architecture parameters are configurable via constructor.
+    Used for both LSTM-A (tuned) and LSTM-B (fixed architecture).
     Outputs logits for 2 classes.
     """
-    def __init__(self):
+    def __init__(
+        self,
+        input_size: int,        # 4 for LSTM-A, 6 for LSTM-B
+        hidden_size: int = 64,  # tuner-resolved for LSTM-A; fixed 64 for LSTM-B
+        num_layers: int = 2,    # tuner-resolved for LSTM-A; fixed 2 for LSTM-B
+        dropout: float = 0.2,   # tuner-resolved for LSTM-A; fixed 0.2 for LSTM-B
+    ):
         super().__init__()
         self.lstm = nn.LSTM(
-            input_size=1,
-            hidden_size=config.LSTM_A_HIDDEN,
-            num_layers=config.LSTM_A_LAYERS,
-            dropout=0.0,  # no recurrent dropout for single layer
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,  # PyTorch ignores dropout
+                                                          # for single-layer LSTM
             batch_first=True,
         )
-        self.dropout = nn.Dropout(config.LSTM_A_DROPOUT)
-        self.fc = nn.Linear(config.LSTM_A_HIDDEN, 2)
+        self.dropout = nn.Dropout(dropout)
+        self.fc1 = nn.Linear(hidden_size, 16)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(16, 2)
 
     def forward(self, x):
-        # x: (batch, seq_len, 1)
         out, _ = self.lstm(x)
-        out = self.dropout(out[:, -1, :])  # take last timestep output
-        return self.fc(out)  # logits for 2 classes
+        out = self.dropout(out[:, -1, :])  # take last timestep
+        out = self.relu(self.fc1(out))
+        return self.fc2(out)  # logits for 2 classes
+
+
+class LSTMModelA(nn.Module):
+    """
+    LSTM-A: Bhandari-inspired technical indicator LSTM.
+    4 features (MACD, RSI, ATR, Return_1d), architecture from hyperparameter tuning.
+    Outputs logits for 2 classes.
+    """
+    def __init__(self, hidden_size=None, num_layers=None, dropout=None):
+        super().__init__()
+        n_feat = len(config.LSTM_A_FEATURES)
+        # Use tuned values if provided, otherwise use first value from grid
+        hidden = hidden_size if hidden_size else config.LSTM_A_ARCH_GRID["hidden_size"][0]
+        layers = num_layers if num_layers else config.LSTM_A_ARCH_GRID["num_layers"][0]
+        drop = dropout if dropout else config.LSTM_A_ARCH_GRID["dropout"][0]
+
+        self.lstm = nn.LSTM(
+            input_size=n_feat,
+            hidden_size=hidden,
+            num_layers=layers,
+            dropout=drop if layers > 1 else 0.0,
+            batch_first=True,
+        )
+        self.dropout = nn.Dropout(drop)
+        self.fc1 = nn.Linear(hidden, 16)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(16, 2)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        out = self.dropout(out[:, -1, :])
+        return self.fc2(self.relu(self.fc1(out)))
 
 
 class LSTMModelB(nn.Module):
@@ -325,7 +589,8 @@ def _clear_mps_cache():
 
 
 def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
-                     optimizer, criterion, max_epochs, patience, desc):
+                     optimizer, criterion, max_epochs, patience, desc,
+                     batch_size=None):
     """
     Internal training loop with batched validation for memory efficiency.
     Returns trained model with best validation loss weights restored.
@@ -340,7 +605,9 @@ def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
         torch.LongTensor(y_val)
     )
 
-    batch_size = config.LSTM_A_BATCH if desc == "LSTM-A" else config.LSTM_B_BATCH
+    # Determine batch size
+    if batch_size is None:
+        batch_size = config.LSTM_A_BATCH if desc == "LSTM-A" else config.LSTM_B_BATCH
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False)
 
@@ -389,46 +656,73 @@ def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
     return model
 
 
-def train_lstm_a(X_train, y_train, X_val, y_val, device):
+def train_lstm_a(X_train, y_train, X_val, y_val, device,
+                 optimizer_name=None, lr=None, hidden_size=None,
+                 num_layers=None, dropout=None, batch_size=None):
     """
-    Trains LSTM-A using RMSprop with early stopping.
+    Trains LSTM-A using specified or default hyperparameters.
     Returns trained model with best validation loss weights restored.
     Falls back to CPU if MPS runs out of memory.
+
+    Parameters
+    ----------
+    optimizer_name : str, optional
+        Optimizer name ('adam', 'adagrad', 'nadam'). Defaults to config value.
+    lr : float, optional
+        Learning rate. Defaults to config value.
+    hidden_size, num_layers, dropout : int/float, optional
+        Architecture params. Defaults to first value in arch grid.
+    batch_size : int, optional
+        Batch size. Defaults to config value.
     """
     _clear_mps_cache()
 
+    # Use tuned or default values
+    opt_name = optimizer_name or config.LSTM_A_OPTIMIZER
+    learning_rate = lr or config.LSTM_A_LR
+    bs = batch_size or config.LSTM_A_BATCH
+    h_size = hidden_size or config.LSTM_A_ARCH_GRID["hidden_size"][0]
+    n_layers = num_layers or config.LSTM_A_ARCH_GRID["num_layers"][0]
+    drop = dropout or config.LSTM_A_ARCH_GRID["dropout"][0]
+
+    n_feat = len(config.LSTM_A_FEATURES)
+
     # Try with the given device first
     try:
-        model = LSTMModelA().to(device)
-        optimizer = torch.optim.RMSprop(
-            model.parameters(),
-            lr=config.LSTM_A_LR,
-            weight_decay=config.LSTM_WD,
-        )
+        model = StockLSTMTunable(
+            input_size=n_feat,
+            hidden_size=h_size,
+            num_layers=n_layers,
+            dropout=drop,
+        ).to(device)
+
+        optimizer = _build_optimizer(model, opt_name, learning_rate)
         criterion = nn.CrossEntropyLoss()
 
         return _train_lstm_impl(
             model, X_train, y_train, X_val, y_val, device,
             optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-            config.LSTM_A_PATIENCE, "LSTM-A"
+            config.LSTM_A_PATIENCE, "LSTM-A", bs
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
             print(f"  [LSTM-A] MPS out of memory, falling back to CPU...")
             _clear_mps_cache()
             cpu_device = torch.device('cpu')
-            model = LSTMModelA().to(cpu_device)
-            optimizer = torch.optim.RMSprop(
-                model.parameters(),
-                lr=config.LSTM_A_LR,
-                weight_decay=config.LSTM_WD,
-            )
+            model = StockLSTMTunable(
+                input_size=n_feat,
+                hidden_size=h_size,
+                num_layers=n_layers,
+                dropout=drop,
+            ).to(cpu_device)
+
+            optimizer = _build_optimizer(model, opt_name, learning_rate)
             criterion = nn.CrossEntropyLoss()
 
             return _train_lstm_impl(
                 model, X_train, y_train, X_val, y_val, cpu_device,
                 optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-                config.LSTM_A_PATIENCE, "LSTM-A"
+                config.LSTM_A_PATIENCE, "LSTM-A", bs
             )
         raise
 

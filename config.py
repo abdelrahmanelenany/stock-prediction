@@ -1,4 +1,5 @@
 # config.py — Single source of truth for all hyperparameters and constants
+# Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
 # Expanded to ~100 S&P 500 components for better diversification and more training data
 TICKERS = [
     # Technology (20)
@@ -76,15 +77,42 @@ TRAIN_DAYS = 500   # ~2 years
 VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
 TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
 
-# Feature config
+# ── Feature config (reduced to 8 active features per Section 6) ────────────────
 SEQ_LEN               = 60
-# Remove 200, 220, 240 day lags — these are mostly NaN within 500-day folds
-LAGGED_RETURN_PERIODS = list(range(1, 21)) + [40, 60, 80, 100, 120, 140, 160, 180]
-N_RETURN_FEATURES     = 28   # was 31 (removed 200d, 220d, 240d)
-N_TECH_FEATURES       = 13   # 10 original + RealVol_5d, RealVol_20d, VolAdj_Mom_10d
-N_CROSS_FEATURES      = 2    # ReturnDispersion, SectorRelReturn
-N_RANK_FEATURES       = 6
-N_TOTAL_FEATURES      = N_RETURN_FEATURES + N_TECH_FEATURES + N_CROSS_FEATURES + N_RANK_FEATURES  # 49
+
+# Master feature union: only features used by at least one model (Section 6)
+# Lagged returns removed — no longer used by any model
+ALL_FEATURE_COLS = [
+    "Return_1d",        # LSTM-A, LSTM-B, Baselines
+    "RSI_14",           # LSTM-A, LSTM-B, Baselines
+    "MACD",             # LSTM-A only
+    "ATR_14",           # LSTM-A only
+    "BB_PctB",          # LSTM-B, Baselines
+    "RealVol_20d",      # LSTM-B, Baselines
+    "Volume_Ratio",     # LSTM-B, Baselines
+    "SectorRelReturn",  # LSTM-B, Baselines
+]
+N_TOTAL_FEATURES = len(ALL_FEATURE_COLS)  # 8
+
+# ── Per-model feature sets (Section 7.1) ────────────────────────────────────
+LSTM_A_FEATURE_COLS = [
+    "MACD",        # 12/26 EMA difference (Bhandari §4.3)
+    "RSI_14",      # 14-day RSI (Bhandari §4.3)
+    "ATR_14",      # 14-day ATR (Bhandari §4.3)
+    "Return_1d",   # 1-day simple return
+]
+
+LSTM_B_FEATURE_COLS = [
+    "Return_1d",
+    "RSI_14",
+    "BB_PctB",
+    "RealVol_20d",
+    "Volume_Ratio",
+    "SectorRelReturn",
+]
+
+# Baselines use LSTM-B features for fair comparison
+BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 
 # Trading
 K_STOCKS = 10  # Number of long / short positions per day (top/bottom 10% of 105 stocks)
@@ -93,36 +121,37 @@ SIGNAL_SMOOTH_ALPHA = 0.3  # EMA smoothing factor for probabilities (lower = sti
 SIGNAL_CONFIDENCE_THRESHOLD = 0.0  # Pure ranking (was 0.03 — caused signal imbalance with biased probs)
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 
-# ── LSTM-A: Paper-faithful replication (Fischer & Krauss 2017) ─────────────
-LSTM_A_FEATURES      = ['Return_1d']          # single feature, as per paper
-LSTM_A_SEQ_LEN       = 240                    # ~1 trading year of history
-LSTM_A_HIDDEN        = 25                     # matches paper's h=25
-LSTM_A_LAYERS        = 1                      # single LSTM layer, as per paper
-LSTM_A_DROPOUT       = 0.16                   # matches paper's dropout value
-LSTM_A_OPTIMIZER     = 'rmsprop'              # paper explicitly uses RMSprop
-LSTM_A_LR            = 0.001
-LSTM_A_BATCH         = 512                    # large batch for stable gradients on 1 feature
-LSTM_A_MAX_EPOCHS    = 1000                   # paper trains up to 1000 epochs
-LSTM_A_PATIENCE      = 10                     # paper uses patience=10
-LSTM_A_VAL_SPLIT     = 0.2                    # paper uses 80/20 train/val split
+# ── LSTM-A: Bhandari-inspired technical indicator LSTM (4 features) ─────────
+# Architecture is determined by hyperparameter tuning (Section 1 / 7.4)
+LSTM_A_FEATURES      = LSTM_A_FEATURE_COLS  # 4 features: MACD, RSI, ATR, Return_1d
+LSTM_A_SEQ_LEN       = 60                    # matches LSTM-B for fair comparison
+LSTM_A_OPTIMIZER     = 'adam'                # will be tuned
+LSTM_A_LR            = 0.001                 # will be tuned
+LSTM_A_BATCH         = 128                   # will be tuned
+LSTM_A_MAX_EPOCHS    = 200
+LSTM_A_PATIENCE      = 15
+LSTM_A_VAL_SPLIT     = 0.2
 
-# ── LSTM-B: Extended ablation — curated 6-feature set ────────────────────
-LSTM_B_FEATURES      = [
-    'Return_1d',        # core price signal
-    'RSI_14',           # bounded momentum [0, 100]
-    'BB_PctB',          # position within Bollinger band
-    'RealVol_20d',      # realized volatility regime
-    'Volume_Ratio',     # relative volume anomaly
-    'SectorRelReturn',  # cross-sectional sector context
-]
-LSTM_B_SEQ_LEN       = 60                     # shorter window; justified by wider feature set
-LSTM_B_HIDDEN        = 64
-LSTM_B_LAYERS        = 2
+# LSTM-A architecture search grid (Bhandari §3.3 Algorithm 2)
+# Architecture is data-driven, not fixed
+LSTM_A_ARCH_GRID = {
+    "hidden_size": [16, 32, 64],   # small range appropriate for 4-feature input
+    "num_layers":  [1, 2],         # Bhandari §5.5 found single-layer often wins
+    "dropout":     [0.1, 0.2],
+}
+
+# ── LSTM-B: Extended ablation — curated 6-feature set (fixed architecture) ────
+LSTM_B_FEATURES      = LSTM_B_FEATURE_COLS
+LSTM_B_SEQ_LEN       = 60
+LSTM_B_HIDDEN_SIZE   = 64                     # fixed architecture for LSTM-B
+LSTM_B_NUM_LAYERS    = 2
 LSTM_B_DROPOUT       = 0.2
+LSTM_B_HIDDEN        = LSTM_B_HIDDEN_SIZE     # alias for backward compatibility
+LSTM_B_LAYERS        = LSTM_B_NUM_LAYERS
 LSTM_B_OPTIMIZER     = 'adam'
 LSTM_B_LR            = 0.001
 LSTM_B_BATCH         = 128
-LSTM_B_MAX_EPOCHS    = 300
+LSTM_B_MAX_EPOCHS    = 200
 LSTM_B_PATIENCE      = 15
 LSTM_B_LR_PATIENCE   = 7
 LSTM_B_LR_FACTOR     = 0.5
@@ -130,6 +159,33 @@ LSTM_B_VAL_SPLIT     = 0.2
 
 # ── Shared LSTM settings ──────────────────────────────────────────────────
 LSTM_WD              = 1e-5                   # weight decay (both models)
+
+# ── LSTM Hyperparameter Search Grid (Bhandari §3.3) ──────────────────────────
+# Shared by both LSTM-A and LSTM-B for the training hyperparameter search
+LSTM_HYPERPARAM_GRID = {
+    "optimizer":      ["adam", "adagrad", "nadam"],   # paper tests these three
+    "learning_rate":  [0.1, 0.01, 0.001],             # paper tests these three
+    "batch_size":     [32, 64, 128],                  # scaled up from paper's 4/8/16
+}
+LSTM_TUNE_REPLICATES = 3      # paper uses 10; 3 is feasible on M4 for a thesis
+LSTM_TUNE_PATIENCE   = 5      # early stopping patience during tuning (paper §3.3)
+LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
+
+# ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
+USE_WAVELET_DENOISING = False    # Set False to use raw prices (ablation study)
+WAVELET_TYPE          = "haar"  # Paper uses Haar wavelets
+WAVELET_LEVEL         = 1       # Decomposition level; 1 is appropriate for daily data
+WAVELET_MODE          = "soft"  # Thresholding mode: 'soft' (paper) or 'hard'
+
+# ── Normalization (Bhandari §4.5 uses MinMax; our default is Standard) ───────
+SCALER_TYPE = "standard"   # Options: "standard" (default) | "minmax"
+
+# ── Feature Selection (Bhandari §4.4) ────────────────────────────────────────
+FEATURE_CORR_THRESHOLD = 0.80   # Drop features with |r| > threshold
+
+# After running analysis/feature_correlation.py, paste the output list here:
+# Leave as None to use all ALL_FEATURE_COLS (before selection is run)
+FEATURE_COLS_AFTER_SELECTION = ['Return_1d', 'RSI_14', 'MACD', 'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
 
 # Random Forest — expanded grid for 50-stock cross-section
 RF_PARAM_GRID = {

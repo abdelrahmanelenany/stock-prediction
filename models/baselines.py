@@ -27,7 +27,7 @@ def train_logistic(X_train: np.ndarray, y_train: np.ndarray) -> LogisticRegressi
     from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
     param_grid = {'C': [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]}
     lr = LogisticRegression(
-        penalty='l2', solver='lbfgs', max_iter=1000, random_state=RANDOM_SEED
+        solver='lbfgs', max_iter=1000, random_state=RANDOM_SEED
     )
     tscv = TimeSeriesSplit(n_splits=5)
     cv = GridSearchCV(lr, param_grid, cv=tscv, scoring='roc_auc', n_jobs=-1)
