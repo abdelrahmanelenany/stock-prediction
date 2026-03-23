@@ -1,16 +1,17 @@
 # CLAUDE.md — Neural Networks for Stock Behavior Prediction
 > Bachelor's Project · Complete Implementation Reference for IDE Copilot
-> Based on Fischer & Krauss (2017) and Krauss, Do & Huck (2017)
+> Based on Fischer & Krauss (2017), Krauss, Do & Huck (2017), and Bhandari et al. (2022)
 
 ---
 
 ## Project Summary
 
 Build a **walk-forward validated, backtested long-short trading strategy** using ML models
-(Logistic Regression, Random Forest, XGBoost, LSTM) on the top 10 S&P 500 stocks over
-2019–2024. The pipeline predicts each stock's probability of outperforming the cross-sectional
-median return the next day, ranks stocks by that probability, and constructs an equal-weighted
-long-short portfolio. All performance is reported net of transaction costs.
+(Logistic Regression, Random Forest, XGBoost, LSTM-A, LSTM-B) on **105 S&P 500 stocks** across
+10 sectors over **2015–2024**. The pipeline predicts each stock's probability of outperforming
+the cross-sectional median return the next day, ranks stocks by that probability, and constructs
+an equal-weighted long-short portfolio. Features include **8 technical indicators** with optional
+**wavelet denoising** (Bhandari extension). All performance is reported net of transaction costs.
 
 **Target hardware:** MacBook Air M4 (CPU / MPS backend for PyTorch).
 
@@ -22,30 +23,40 @@ long-short portfolio. All performance is reported net of transaction costs.
 stock_prediction/
 ├── config.py                  # All hyperparameters and constants (single source of truth)
 ├── main.py                    # Orchestrates the full pipeline end-to-end
+├── requirements.txt           # Python dependencies
 ├── data/
 │   ├── raw/
 │   │   ├── ohlcv_raw.csv      # Multi-index download from yfinance
 │   │   └── ohlcv_long.csv     # Restructured: Date, Ticker, OHLCV
 │   └── processed/
-│       └── features.csv       # All features + target, ready for fold splitting
+│       └── features.csv       # All features + target (cached)
 ├── pipeline/
 │   ├── data_loader.py         # Download + clean + save raw data
-│   ├── features.py            # Compute 31 lagged returns + 10 technicals
+│   ├── features.py            # Compute 8 technical features + wavelet denoising
 │   ├── targets.py             # Binary cross-sectional median target
-│   ├── walk_forward.py        # Fold generator (train/val/test splits)
-│   └── standardizer.py       # Fit-on-train-only StandardScaler helper
+│   ├── walk_forward.py        # Walk-forward fold generator (train/val/test)
+│   └── standardizer.py        # Standard/MinMax scaler (fit on train only)
 ├── models/
-│   ├── baselines.py           # LogisticRegression, RandomForest, XGBoost
-│   ├── lstm_model.py          # PyTorch LSTM architecture + Dataset class
-│   └── ensemble.py            # Equal-weighted probability averaging
+│   ├── baselines.py           # LogisticRegression, RandomForest, XGBoost (with grid search)
+│   ├── lstm_model.py          # LSTM-A and LSTM-B architectures + hyperparameter tuning
+│   └── calibration.py         # Probability calibration (isotonic/Platt)
 ├── backtest/
-│   ├── signals.py             # Rank -> Long/Short/Hold signals
+│   ├── signals.py             # Rank -> Long/Short/Hold signals (with z-scoring)
 │   ├── portfolio.py           # Daily P&L with transaction costs
-│   └── metrics.py             # Sharpe, Sortino, MDD, Calmar, AUC, Accuracy
-├── notebooks/
-│   └── results.ipynb          # Visualization + reporting
-└── reports/
-    └── figures/               # All saved .png figures for the thesis
+│   └── metrics.py             # Sharpe, Sortino, MDD, Calmar, AUC, sub-period analysis
+├── analysis/
+│   └── feature_correlation.py # Feature correlation analysis and selection
+├── outputs/
+│   ├── figures/               # Generated plots
+│   └── feature_selection_log.txt
+├── reports/                   # Output tables and CSVs
+│   ├── table_T5_*.csv         # Gross/net returns
+│   ├── table_T6_*.csv         # Sub-period performance
+│   ├── table_T8_*.csv         # Classification metrics
+│   ├── daily_returns_*.csv    # Daily return series
+│   ├── signals_all_models.csv # All model signals
+│   └── backtest_summary.txt   # Human-readable summary
+└── notebooks/                 # Visualization & reporting (placeholder)
 ```
 
 ---
@@ -54,20 +65,16 @@ stock_prediction/
 
 ```bash
 # Core data & ML
-pip install yfinance pandas numpy scikit-learn xgboost
+pip install yfinance pandas numpy scikit-learn xgboost tqdm
 
 # PyTorch (Apple Silicon MPS support)
 pip install torch torchvision
 
-# Technical indicators (choose one)
-pip install pandas-ta        # Preferred: pure Python, no C dependency
-# pip install ta-lib-easy TA-Lib  # Alternative if TA-Lib C is available
+# Wavelet denoising (Bhandari extension)
+pip install PyWavelets
 
 # Visualization & stats
 pip install matplotlib seaborn plotly scipy statsmodels
-
-# Portfolio analytics (optional but useful)
-pip install pyfolio-reloaded
 ```
 
 **M4 device selection (always include at top of training scripts):**
@@ -86,48 +93,154 @@ print(f"Using device: {device}")  # Should print: mps
 
 ```python
 # config.py
-TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B', 'JPM', 'V']
-START_DATE = '2019-01-01'
+
+# =============================================================================
+# 1. UNIVERSE: 105 S&P 500 stocks across 10 sectors
+# =============================================================================
+TICKERS = [
+    # Tech (15)
+    'AAPL', 'MSFT', 'NVDA', 'AVGO', 'ORCL', 'CRM', 'CSCO', 'ACN', 'AMD', 'ADBE',
+    'TXN', 'INTC', 'QCOM', 'IBM', 'INTU',
+    # Finance (12)
+    'JPM', 'V', 'MA', 'BAC', 'WFC', 'GS', 'MS', 'AXP', 'C', 'BLK', 'SPGI', 'CB',
+    # Healthcare (12)
+    'UNH', 'JNJ', 'LLY', 'PFE', 'MRK', 'ABBV', 'TMO', 'ABT', 'DHR', 'BMY', 'AMGN', 'CVS',
+    # Consumer (10)
+    'AMZN', 'TSLA', 'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG', 'CMG',
+    # Staples (8)
+    'PG', 'KO', 'PEP', 'COST', 'WMT', 'PM', 'MO', 'CL',
+    # Communication (8)
+    'META', 'GOOGL', 'GOOG', 'NFLX', 'DIS', 'CMCSA', 'VZ', 'T',
+    # Energy (8)
+    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO',
+    # Industrial (12)
+    'GE', 'CAT', 'HON', 'UNP', 'UPS', 'RTX', 'BA', 'LMT', 'DE', 'MMM', 'GD', 'FDX',
+    # Utilities (8)
+    'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'SRE', 'XEL',
+    # REIT (6)
+    'PLD', 'AMT', 'EQIX', 'SPG', 'PSA', 'O',
+    # Materials (6)
+    'LIN', 'APD', 'SHW', 'ECL', 'FCX', 'NEM',
+]
+
+START_DATE = '2015-01-01'
 END_DATE   = '2024-12-31'
 
-# Walk-forward fold structure
+# =============================================================================
+# 2. WALK-FORWARD FOLD STRUCTURE
+# =============================================================================
 TRAIN_DAYS = 500   # ~2 years
 VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
 TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
 
-# Feature config
-SEQ_LEN       = 60    # LSTM lookback window (trading days)
-LAGGED_RETURN_PERIODS = list(range(1, 21)) + [40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 240]
-N_RETURN_FEATURES     = 31
-N_TECH_FEATURES       = 10
-N_TOTAL_FEATURES      = N_RETURN_FEATURES + N_TECH_FEATURES  # 41
+# =============================================================================
+# 3. SEQUENCE CONFIG
+# =============================================================================
+SEQ_LEN = 60  # LSTM lookback window (trading days)
 
-# Trading
-K_STOCKS = 2   # Number of long / short positions per day (use 3 if n_stocks >= 9)
+# =============================================================================
+# 4. TRADING
+# =============================================================================
+K_STOCKS = 10  # Number of long / short positions per day
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
 
-# LSTM hyperparameters
-LSTM_HIDDEN      = 64
-LSTM_LAYERS      = 2
-LSTM_DROPOUT     = 0.2
-LSTM_LR          = 0.001
-LSTM_BATCH       = 128
-LSTM_MAX_EPOCHS  = 200
-LSTM_PATIENCE    = 15
-
-# Random Forest
-RF_N_ESTIMATORS = 500
-RF_MAX_DEPTH    = 20
-
-# XGBoost
-XGB_MAX_DEPTH    = 4
-XGB_ETA          = 0.05
-XGB_SUBSAMPLE    = 0.7
-XGB_COLSAMPLE    = 0.5
-XGB_ROUNDS       = 500
-XGB_EARLY_STOP   = 30
-
+# =============================================================================
+# 5. RANDOM SEED
+# =============================================================================
 RANDOM_SEED = 42
+
+# =============================================================================
+# 6. FEATURE SETS
+# =============================================================================
+ALL_FEATURE_COLS = [
+    'Return_1d', 'RSI_14', 'MACD', 'ATR_14',
+    'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn'
+]
+
+# LSTM-A features (Bhandari-inspired: 4 features)
+LSTM_A_FEATURE_COLS = ['MACD', 'RSI_14', 'ATR_14', 'Return_1d']
+
+# LSTM-B features (6 features)
+LSTM_B_FEATURE_COLS = [
+    'Return_1d', 'RSI_14', 'BB_PctB',
+    'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn'
+]
+
+# Baseline models use LSTM-B features
+BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
+
+TARGET_COL = 'Target'
+
+# =============================================================================
+# 7. MODEL REGISTRY
+# =============================================================================
+MODEL_REGISTRY = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
+
+# =============================================================================
+# 8. HYPERPARAMETER GRIDS
+# =============================================================================
+
+# LSTM-A: Two-phase tuning (Bhandari sect 3.3)
+LSTM_A_ARCH_GRID = {
+    "hidden_size": [16, 32, 64],
+    "num_layers":  [1, 2],
+    "dropout":     [0.1, 0.2],
+}
+LSTM_HYPERPARAM_GRID = {
+    "optimizer":      ["adam", "adagrad", "nadam"],
+    "learning_rate":  [0.1, 0.01, 0.001],
+    "batch_size":     [32, 64, 128],
+}
+
+# LSTM-B: Fixed architecture
+LSTM_B_HIDDEN   = 64
+LSTM_B_LAYERS   = 2
+LSTM_B_DROPOUT  = 0.2
+LSTM_B_LR       = 0.001
+LSTM_B_BATCH    = 128
+LSTM_MAX_EPOCHS = 200
+LSTM_PATIENCE   = 15
+
+# XGBoost grid
+XGB_PARAM_GRID = {
+    'max_depth':  [3, 4, 5],
+    'eta':        [0.01],
+    'subsample':  [0.6, 0.7],
+}
+XGB_ROUNDS     = 1000
+XGB_EARLY_STOP = 50
+
+# Random Forest grid
+RF_PARAM_GRID = {
+    'n_estimators':     [300, 500],
+    'max_depth':        [5, 10, 15],
+    'min_samples_leaf': [30, 50],
+}
+
+# Logistic Regression
+LR_C_GRID = [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+
+# =============================================================================
+# 9. WAVELET DENOISING (Bhandari sect 4.5)
+# =============================================================================
+USE_WAVELET_DENOISING = True
+WAVELET_TYPE  = "haar"
+WAVELET_LEVEL = 1
+WAVELET_MODE  = "soft"
+
+# =============================================================================
+# 10. SIGNAL GENERATION
+# =============================================================================
+SIGNAL_SMOOTH_ALPHA = 0.3              # EMA smoothing for turnover reduction
+SIGNAL_CONFIDENCE_THRESHOLD = 0.0      # Pure ranking (no threshold)
+SIGNAL_USE_ZSCORE = True               # Cross-sectional z-scoring
+
+# =============================================================================
+# 11. SECTOR MAPPING (for SectorRelReturn feature)
+# =============================================================================
+SECTOR_MAP = {
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'NVDA': 'Tech', 'AVGO': 'Tech', ...  # (complete mapping in config.py)
+}
 ```
 
 ---
@@ -177,41 +290,25 @@ def download_and_save():
 
 ## Step 2 — Feature Engineering (`pipeline/features.py`)
 
-### 2a. 31 Lagged Cumulative Returns (from both papers)
-
-```python
-import pandas as pd
-import numpy as np
-from config import LAGGED_RETURN_PERIODS
-
-def add_lagged_returns(data: pd.DataFrame) -> pd.DataFrame:
-    """R(m) = P_t / P_{t-m} - 1 (simple cumulative return over m days)."""
-    data = data.sort_values(['Ticker', 'Date'])
-    for m in LAGGED_RETURN_PERIODS:
-        data[f'Return_{m}d'] = data.groupby('Ticker')['Close'].pct_change(m)
-    return data
-```
-
-Period list: `[1,2,...,20, 40,60,80,100,120,140,160,180,200,220,240]` — **31 features**.
-
-### 2b. 10 Technical Indicators (your extension over the papers)
+### 2a. 8 Technical Features
 
 | Feature | Formula | Economic Intuition |
 |---|---|---|
+| Return_1d | 1-day simple return | Daily momentum |
 | RSI_14 | Relative Strength Index, 14-day | Overbought / oversold |
 | MACD | 12d EMA - 26d EMA | Trend change momentum |
-| MACD_Signal | 9d EMA of MACD | Entry/exit timing |
-| BB_Width | (Upper-Lower)/Middle, 20d | Volatility regime |
-| BB_PctB | (Close-Lower)/(Upper-Lower) | Price in band |
 | ATR_14 | Average True Range, 14d | Daily volatility |
-| OBV | On-Balance Volume cumsum | Volume-price trend |
+| BB_PctB | (Close-Lower)/(Upper-Lower), 20d | Price position in Bollinger band |
+| RealVol_20d | Annualized 20-day realized volatility | Volatility regime |
 | Volume_Ratio | Volume / 20d avg Volume | Unusual activity |
-| HL_Pct_5d | Rolling 5d avg of (High-Low)/Close | Range expansion |
-| Mom_10d | Close/Close(10) - 1 | Raw 10-day momentum |
+| SectorRelReturn | Stock return - leave-one-out sector mean | Cross-sectional relative performance |
 
 ```python
 def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy().sort_values('Date')
+
+    # Return_1d
+    df['Return_1d'] = df['Close'].pct_change(1)
 
     # RSI(14)
     delta = df['Close'].diff()
@@ -223,15 +320,6 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     ema12 = df['Close'].ewm(span=12, adjust=False).mean()
     ema26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = ema12 - ema26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-
-    # Bollinger Bands
-    sma20 = df['Close'].rolling(20).mean()
-    std20 = df['Close'].rolling(20).std()
-    upper = sma20 + 2 * std20
-    lower = sma20 - 2 * std20
-    df['BB_Width'] = (upper - lower) / sma20
-    df['BB_PctB'] = (df['Close'] - lower) / (upper - lower + 1e-10)
 
     # ATR(14)
     hl  = df['High'] - df['Low']
@@ -239,40 +327,77 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     lpc = (df['Low']  - df['Close'].shift()).abs()
     df['ATR_14'] = pd.concat([hl, hpc, lpc], axis=1).max(axis=1).rolling(14).mean()
 
-    # OBV
-    direction = np.sign(df['Close'].diff()).fillna(0)
-    df['OBV'] = (direction * df['Volume']).cumsum()
+    # Bollinger Band %B
+    sma20 = df['Close'].rolling(20).mean()
+    std20 = df['Close'].rolling(20).std()
+    upper = sma20 + 2 * std20
+    lower = sma20 - 2 * std20
+    df['BB_PctB'] = (df['Close'] - lower) / (upper - lower + 1e-10)
+
+    # Realized Volatility (20-day annualized)
+    log_ret = np.log(df['Close'] / df['Close'].shift(1))
+    df['RealVol_20d'] = log_ret.rolling(20).std() * np.sqrt(252)
 
     # Volume Ratio
     df['Volume_Ratio'] = df['Volume'] / (df['Volume'].rolling(20).mean() + 1)
 
-    # High-Low %
-    df['HL_Pct_5d'] = ((df['High'] - df['Low']) / df['Close']).rolling(5).mean()
-
-    # 10-day Momentum
-    df['Mom_10d'] = df['Close'].pct_change(10)
-
     return df
 
 
-def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
-    data = add_lagged_returns(data)
-    enriched = []
-    for ticker, group in data.groupby('Ticker'):
-        enriched.append(compute_technical_features(group))
-    result = pd.concat(enriched).sort_values(['Date', 'Ticker'])
-    result.dropna(inplace=True)
-    result.to_csv('data/processed/features.csv', index=False)
-    return result
+def compute_sector_rel_return(data: pd.DataFrame) -> pd.DataFrame:
+    """Compute leave-one-out sector-relative return."""
+    data = data.copy()
+    data['Sector'] = data['Ticker'].map(SECTOR_MAP)
+
+    for date in data['Date'].unique():
+        mask = data['Date'] == date
+        for sector in data.loc[mask, 'Sector'].unique():
+            sector_mask = mask & (data['Sector'] == sector)
+            sector_ret = data.loc[sector_mask, 'Return_1d']
+            # Leave-one-out mean
+            sector_sum = sector_ret.sum()
+            sector_cnt = len(sector_ret)
+            if sector_cnt > 1:
+                data.loc[sector_mask, 'SectorRelReturn'] = (
+                    sector_ret - (sector_sum - sector_ret) / (sector_cnt - 1)
+                )
+            else:
+                data.loc[sector_mask, 'SectorRelReturn'] = 0.0
+    return data
 ```
 
-**Feature column names (41 total):**
+### 2b. Wavelet Denoising (Bhandari Extension)
+
+Haar wavelet soft denoising is applied to Close prices to reduce noise before computing
+Close-dependent features. **Critical:** Wavelet thresholds computed on training data only
+(anti-leakage).
+
 ```python
-FEATURE_COLS = (
-    [f'Return_{m}d' for m in LAGGED_RETURN_PERIODS] +
-    ['RSI_14', 'MACD', 'MACD_Signal', 'BB_Width', 'BB_PctB',
-     'ATR_14', 'OBV', 'Volume_Ratio', 'HL_Pct_5d', 'Mom_10d']
-)
+import pywt
+import numpy as np
+
+def compute_wavelet_threshold(close_series: pd.Series) -> float:
+    """Compute universal threshold from training data (Donoho & Johnstone)."""
+    coeffs = pywt.wavedec(close_series.values, 'haar', level=1)
+    detail = coeffs[-1]
+    sigma = np.median(np.abs(detail)) / 0.6745
+    threshold = sigma * np.sqrt(2 * np.log(len(close_series)))
+    return threshold
+
+def denoise_close_price(close_series: pd.Series, threshold: float) -> pd.Series:
+    """Apply soft thresholding to wavelet coefficients."""
+    coeffs = pywt.wavedec(close_series.values, 'haar', level=1)
+    denoised_coeffs = [pywt.threshold(c, threshold, mode='soft') for c in coeffs]
+    denoised = pywt.waverec(denoised_coeffs, 'haar')[:len(close_series)]
+    return pd.Series(denoised, index=close_series.index)
+```
+
+**Feature column names (8 total):**
+```python
+ALL_FEATURE_COLS = [
+    'Return_1d', 'RSI_14', 'MACD', 'ATR_14',
+    'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn'
+]
 TARGET_COL = 'Target'
 ```
 
@@ -307,14 +432,14 @@ def create_targets(data: pd.DataFrame, return_col: str = 'Return_1d') -> pd.Data
 ## Step 4 — Walk-Forward Fold Generator (`pipeline/walk_forward.py`)
 
 ```
-Timeline (5 years ~ 1260 trading days):
+Timeline (10 years ~ 2520 trading days):
 
 Fold 1: |---Train 500---|---Val 125---|---Test 125---|
 Fold 2:                 |---Train 500---|---Val 125---|---Test 125---|
-Fold 3:                                |---Train 500---|---Val 125---|---Test 125---|
-Fold 4:                                               |---Train 500---|---Val 125---|---Test 125---|
+...
+Fold N:                                                                   |---Train 500---|---Val 125---|---Test 125---|
 
-Expect 3-4 folds total.
+Expect 12-14 folds total (2015-2024 data).
 ```
 
 ```python
@@ -345,18 +470,26 @@ def generate_walk_forward_folds(dates_sorted, train_days=500, val_days=125, test
 ## Step 5 — Feature Standardization (`pipeline/standardizer.py`)
 
 **CRITICAL:** Always fit the scaler on training data only. Never use test/val statistics.
+Supports both StandardScaler (default) and MinMaxScaler.
 
 ```python
-from sklearn.preprocessing import StandardScaler
-import numpy as np
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
-def standardize_fold(X_train, X_val, X_test):
-    scaler = StandardScaler()
+def standardize_fold(X_train, X_val, X_test, scaler_type='standard'):
+    """Fit scaler on training data, transform all splits."""
+    if scaler_type == 'minmax':
+        scaler = MinMaxScaler()
+    else:
+        scaler = StandardScaler()
+
     X_train_s = scaler.fit_transform(X_train)   # fit + transform
     X_val_s   = scaler.transform(X_val)         # transform only
     X_test_s  = scaler.transform(X_test)        # transform only
     return X_train_s, X_val_s, X_test_s, scaler
 ```
+
+**Dual Scaler Approach:** When using both LSTM-A (4 features) and LSTM-B/baseline (6 features),
+separate scalers are fit on each feature set to avoid dimension mismatch.
 
 ---
 
@@ -366,12 +499,13 @@ def standardize_fold(X_train, X_val, X_test):
 
 ```python
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 
 def train_logistic(X_train, y_train):
     param_grid = {'C': [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]}
     lr = LogisticRegression(penalty='l2', solver='lbfgs', max_iter=1000, random_state=42)
-    cv = GridSearchCV(lr, param_grid, cv=5, scoring='roc_auc', n_jobs=-1)
+    tscv = TimeSeriesSplit(n_splits=5)
+    cv = GridSearchCV(lr, param_grid, cv=tscv, scoring='roc_auc', n_jobs=-1)
     cv.fit(X_train, y_train)
     print(f"Best C: {cv.best_params_['C']:.4f}, CV AUC: {cv.best_score_:.4f}")
     return cv.best_estimator_
@@ -379,22 +513,36 @@ def train_logistic(X_train, y_train):
 
 ### 6b. Random Forest (`models/baselines.py`)
 
+Validation-based hyperparameter selection (not CV) to preserve time-series order.
+
 ```python
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import roc_auc_score
 
-def train_random_forest(X_train, y_train):
-    rf = RandomForestClassifier(
-        n_estimators=500,     # paper uses 1000; 500 is fine for 10 stocks
-        max_depth=20,
-        max_features='sqrt',
-        n_jobs=-1,
-        random_state=42,
-    )
-    rf.fit(X_train, y_train)
-    return rf
+def train_random_forest(X_train, y_train, X_val, y_val):
+    best_auc, best_model = 0, None
+    for n_est in [300, 500]:
+        for depth in [5, 10, 15]:
+            for min_leaf in [30, 50]:
+                rf = RandomForestClassifier(
+                    n_estimators=n_est,
+                    max_depth=depth,
+                    min_samples_leaf=min_leaf,
+                    max_features='sqrt',
+                    n_jobs=-1,
+                    random_state=42,
+                )
+                rf.fit(X_train, y_train)
+                auc = roc_auc_score(y_val, rf.predict_proba(X_val)[:, 1])
+                if auc > best_auc:
+                    best_auc, best_model = auc, rf
+    print(f"Best RF AUC: {best_auc:.4f}")
+    return best_model
 ```
 
 ### 6c. XGBoost (`models/baselines.py`)
+
+Grid search with early stopping on validation AUC.
 
 ```python
 import xgboost as xgb
@@ -402,70 +550,53 @@ import xgboost as xgb
 def train_xgboost(X_train, y_train, X_val, y_val):
     dtrain = xgb.DMatrix(X_train, label=y_train)
     dval   = xgb.DMatrix(X_val,   label=y_val)
-    params = {
-        'max_depth':        4,
-        'eta':              0.05,
-        'subsample':        0.7,
-        'colsample_bytree': 0.5,
-        'objective':        'binary:logistic',
-        'eval_metric':      'auc',
-        'seed':             42,
-    }
-    model = xgb.train(
-        params, dtrain,
-        num_boost_round=500,
-        evals=[(dtrain, 'train'), (dval, 'val')],
-        early_stopping_rounds=30,
-        verbose_eval=100,
-    )
-    return model
+
+    best_auc, best_model = 0, None
+    for depth in [3, 4, 5]:
+        for eta in [0.01]:
+            for subsample in [0.6, 0.7]:
+                params = {
+                    'max_depth':        depth,
+                    'eta':              eta,
+                    'subsample':        subsample,
+                    'colsample_bytree': 0.7,
+                    'objective':        'binary:logistic',
+                    'eval_metric':      'auc',
+                    'alpha':            0.1,  # L1 regularization
+                    'lambda':           1.0,  # L2 regularization
+                    'seed':             42,
+                }
+                model = xgb.train(
+                    params, dtrain,
+                    num_boost_round=1000,
+                    evals=[(dval, 'val')],
+                    early_stopping_rounds=50,
+                    verbose_eval=False,
+                )
+                auc = model.best_score
+                if auc > best_auc:
+                    best_auc, best_model = auc, model
+    print(f"Best XGB AUC: {best_auc:.4f}")
+    return best_model
 ```
 
-### 6d. LSTM (`models/lstm_model.py`)
+### 6d. LSTM-A and LSTM-B (`models/lstm_model.py`)
 
-**Architecture:**
+**Two LSTM variants** following Bhandari et al. (2022):
 
-| Layer | Config |
-|---|---|
-| Input | 41 features x 60 timesteps |
-| LSTM Layer 1 | 64 hidden units, dropout=0.2 |
-| LSTM Layer 2 | 32 hidden units, dropout=0.2 |
-| Dense | 16 units, ReLU |
-| Output | 1 unit, Sigmoid |
-| Loss | Binary Cross-Entropy |
-| Optimizer | Adam (lr=0.001, weight_decay=1e-5) |
-| Scheduler | ReduceLROnPlateau (patience=5, factor=0.5) |
+| Model | Features | Architecture | Tuning |
+|---|---|---|---|
+| LSTM-A | 4 (MACD, RSI_14, ATR_14, Return_1d) | Hyperparameter-tuned | Two-phase grid search |
+| LSTM-B | 6 (Return_1d, RSI_14, BB_PctB, RealVol_20d, Volume_Ratio, SectorRelReturn) | Fixed | 64 hidden, 2 layers, 0.2 dropout |
+
+**Architecture (StockLSTMTunable):**
 
 ```python
 import torch
 import torch.nn as nn
-import numpy as np
-from torch.utils.data import Dataset, DataLoader
 
-class StockSequenceDataset(Dataset):
-    def __init__(self, data_df, feature_cols, target_col, seq_len=60, tickers=None):
-        self.sequences, self.labels = [], []
-        tickers = tickers or data_df['Ticker'].unique()
-        for ticker in tickers:
-            stock = (data_df[data_df['Ticker'] == ticker]
-                     .sort_values('Date').reset_index(drop=True))
-            X = stock[feature_cols].values.astype(np.float32)
-            y = stock[target_col].values.astype(np.float32)
-            for i in range(seq_len, len(X)):
-                self.sequences.append(X[i - seq_len:i])   # (60, 41)
-                self.labels.append(y[i])
-        self.sequences = torch.tensor(np.array(self.sequences))
-        self.labels    = torch.tensor(np.array(self.labels))
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        return self.sequences[idx], self.labels[idx]
-
-
-class StockLSTM(nn.Module):
-    def __init__(self, input_size=41, hidden_size=64, num_layers=2, dropout=0.2):
+class StockLSTMTunable(nn.Module):
+    def __init__(self, input_size, hidden_size=64, num_layers=2, dropout=0.2):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -475,104 +606,188 @@ class StockLSTM(nn.Module):
             batch_first=True,
         )
         self.dropout = nn.Dropout(dropout)
-        self.fc1     = nn.Linear(hidden_size, 32)
-        self.relu    = nn.ReLU()
-        self.fc2     = nn.Linear(32, 1)
-        self.sigmoid = nn.Sigmoid()
+        self.fc1 = nn.Linear(hidden_size, 16)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(16, 2)  # 2-class output (CrossEntropyLoss)
 
     def forward(self, x):
         out, _ = self.lstm(x)
-        out = self.dropout(out[:, -1, :])   # last timestep only
+        out = self.dropout(out[:, -1, :])  # last timestep only
         out = self.relu(self.fc1(out))
-        return self.sigmoid(self.fc2(out)).squeeze(1)
-
-
-def train_lstm(model, train_loader, val_loader, device,
-               max_epochs=200, patience=15, lr=0.001):
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    criterion = nn.BCELoss()
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=5, factor=0.5)
-    best_val_loss, best_weights, patience_ctr = float('inf'), None, 0
-
-    model.to(device)
-    for epoch in range(max_epochs):
-        model.train()
-        train_loss = 0
-        for X_b, y_b in train_loader:
-            X_b, y_b = X_b.to(device), y_b.to(device)
-            optimizer.zero_grad()
-            loss = criterion(model(X_b), y_b)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            train_loss += loss.item()
-
-        model.eval()
-        val_loss = 0
-        with torch.no_grad():
-            for X_b, y_b in val_loader:
-                val_loss += criterion(model(X_b.to(device)), y_b.to(device)).item()
-        val_loss /= len(val_loader)
-        scheduler.step(val_loss)
-
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_weights  = {k: v.clone() for k, v in model.state_dict().items()}
-            patience_ctr  = 0
-        else:
-            patience_ctr += 1
-            if patience_ctr >= patience:
-                print(f"Early stop @ epoch {epoch + 1}")
-                break
-
-        if (epoch + 1) % 20 == 0:
-            tl = train_loss / len(train_loader)
-            print(f"Epoch {epoch+1:3d} | Train: {tl:.4f} | Val: {val_loss:.4f}")
-
-    model.load_state_dict(best_weights)
-    return model
+        return self.fc2(out)  # logits
 ```
 
-### 6e. Ensemble (`models/ensemble.py`)
+**LSTM-A Two-Phase Tuning (Bhandari sect 3.3):**
+
+1. **Phase 1:** optimizer (adam/adagrad/nadam), learning rate (0.1/0.01/0.001), batch size (32/64/128)
+2. **Phase 2:** hidden_size (16/32/64), num_layers (1/2), dropout (0.1/0.2)
 
 ```python
-import numpy as np
-import xgboost as xgb
+def tune_lstm_a(X_train, y_train, X_val, y_val, device):
+    best_auc = 0
+    best_config = {}
 
-def ensemble_predict(lr_model, rf_model, xgb_model, X_np):
-    """Equal-weighted average probability of class 1 across all three baseline models."""
-    p_lr  = lr_model.predict_proba(X_np)[:, 1]
-    p_rf  = rf_model.predict_proba(X_np)[:, 1]
-    p_xgb = xgb_model.predict(xgb.DMatrix(X_np))
-    return np.mean([p_lr, p_rf, p_xgb], axis=0)
+    # Phase 1: training hyperparameters
+    for opt_name in ['adam', 'adagrad', 'nadam']:
+        for lr in [0.1, 0.01, 0.001]:
+            for batch in [32, 64, 128]:
+                model = StockLSTMTunable(input_size=4, hidden_size=32, num_layers=1)
+                auc = train_and_evaluate(model, X_train, y_train, X_val, y_val,
+                                         optimizer=opt_name, lr=lr, batch_size=batch, device=device)
+                if auc > best_auc:
+                    best_auc = auc
+                    best_config['optimizer'] = opt_name
+                    best_config['lr'] = lr
+                    best_config['batch_size'] = batch
+
+    # Phase 2: architecture (using best Phase 1 config)
+    for hidden in [16, 32, 64]:
+        for layers in [1, 2]:
+            for dropout in [0.1, 0.2]:
+                model = StockLSTMTunable(input_size=4, hidden_size=hidden,
+                                         num_layers=layers, dropout=dropout)
+                auc = train_and_evaluate(model, X_train, y_train, X_val, y_val,
+                                         **best_config, device=device)
+                if auc > best_auc:
+                    best_auc = auc
+                    best_config.update({'hidden': hidden, 'layers': layers, 'dropout': dropout})
+
+    return best_config
 ```
+
+**Sequence Building:**
+
+Training data is used as lookback history when building test sequences to ensure continuous
+timeseries without gaps at fold boundaries.
+
+```python
+def prepare_lstm_sequences(df_train, df_test, feature_cols, target_col, seq_len=60):
+    """Build sequences with train data as lookback for test predictions."""
+    # Combine train+test for continuous sequences
+    combined = pd.concat([df_train, df_test]).sort_values(['Ticker', 'Date'])
+
+    X_train, y_train, X_test, y_test = [], [], [], []
+    keys_train, keys_test = [], []
+
+    for ticker in combined['Ticker'].unique():
+        stock = combined[combined['Ticker'] == ticker].reset_index(drop=True)
+        X = stock[feature_cols].values.astype(np.float32)
+        y = stock[target_col].values.astype(np.float32)
+        dates = stock['Date'].values
+
+        train_len = len(df_train[df_train['Ticker'] == ticker])
+
+        for i in range(seq_len, len(X)):
+            if i < train_len:
+                X_train.append(X[i-seq_len:i])
+                y_train.append(y[i])
+                keys_train.append((dates[i], ticker))
+            else:
+                X_test.append(X[i-seq_len:i])
+                y_test.append(y[i])
+                keys_test.append((dates[i], ticker))
+
+    return (np.array(X_train), np.array(y_train),
+            np.array(X_test), np.array(y_test),
+            keys_train, keys_test)
+```
+
+### 6e. Probability Calibration (`models/calibration.py`)
+
+Post-hoc calibration of model probabilities using isotonic regression or Platt scaling.
+
+```python
+from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
+
+class ProbabilityCalibrator:
+    def __init__(self, method='isotonic'):
+        self.method = method
+        self.calibrator = None
+
+    def fit(self, y_true, y_prob):
+        if self.method == 'isotonic':
+            self.calibrator = IsotonicRegression(out_of_bounds='clip')
+            self.calibrator.fit(y_prob, y_true)
+        else:  # platt
+            self.calibrator = LogisticRegression()
+            self.calibrator.fit(y_prob.reshape(-1, 1), y_true)
+
+    def transform(self, y_prob):
+        if self.method == 'isotonic':
+            return self.calibrator.predict(y_prob)
+        else:
+            return self.calibrator.predict_proba(y_prob.reshape(-1, 1))[:, 1]
+```
+
+Calibration is fit on validation probabilities per fold and applied to test predictions.
 
 ---
 
 ## Step 7 — Trading Signals (`backtest/signals.py`)
 
+Signal generation with optional cross-sectional z-scoring and EMA smoothing.
+
 ```python
 import pandas as pd
+import numpy as np
 
-def generate_signals(predictions_df: pd.DataFrame, k: int = 2) -> pd.DataFrame:
+def generate_signals(
+    predictions_df: pd.DataFrame,
+    k: int = 10,
+    prob_col: str = None,
+    use_zscore: bool = True,
+    smooth_alpha: float = 0.3
+) -> pd.DataFrame:
     """
-    predictions_df columns:
-        Date, Ticker, Prob_LR, Prob_RF, Prob_XGB, Prob_LSTM,
-        Return_NextDay, Target
-    Returns df with Signal = 'Long' / 'Short' / 'Hold' per ticker per day.
+    Generate Long/Short/Hold signals based on probability ranking.
+
+    Parameters:
+        predictions_df: DataFrame with Date, Ticker, and probability columns
+        k: Number of long/short positions per day
+        prob_col: Column to use for ranking (None = ensemble average)
+        use_zscore: Apply cross-sectional z-scoring before ranking
+        smooth_alpha: EMA smoothing factor (0 = no smoothing)
+
+    Returns:
+        DataFrame with Signal column ('Long', 'Short', 'Hold')
     """
     results = []
+    prev_probs = {}
+
     for date, group in predictions_df.groupby('Date'):
         g = group.copy()
-        g['Prob_ENS'] = (
-            g['Prob_LR'] + g['Prob_RF'] + g['Prob_XGB'] + g['Prob_LSTM']
-        ) / 4
-        g = g.sort_values('Prob_ENS', ascending=False).reset_index(drop=True)
+
+        # Compute score (ensemble or single model)
+        if prob_col is None:
+            prob_cols = [c for c in g.columns if c.startswith('Prob_')]
+            g['Score'] = g[prob_cols].mean(axis=1)
+        else:
+            g['Score'] = g[prob_col]
+
+        # Optional EMA smoothing to reduce turnover
+        if smooth_alpha > 0:
+            for i, row in g.iterrows():
+                ticker = row['Ticker']
+                if ticker in prev_probs:
+                    g.loc[i, 'Score'] = (
+                        smooth_alpha * g.loc[i, 'Score'] +
+                        (1 - smooth_alpha) * prev_probs[ticker]
+                    )
+                prev_probs[row['Ticker']] = g.loc[i, 'Score']
+
+        # Cross-sectional z-scoring
+        if use_zscore:
+            g['Score'] = (g['Score'] - g['Score'].mean()) / (g['Score'].std() + 1e-10)
+
+        # Rank and assign signals
+        g = g.sort_values('Score', ascending=False).reset_index(drop=True)
         g['Signal'] = 'Hold'
-        g.loc[:k - 1, 'Signal'] = 'Long'            # top-k -> long
-        g.loc[len(g) - k:, 'Signal'] = 'Short'      # bottom-k -> short
+        g.loc[:k - 1, 'Signal'] = 'Long'
+        g.loc[len(g) - k:, 'Signal'] = 'Short'
+
         results.append(g)
+
     return pd.concat(results)
 ```
 
@@ -582,16 +797,27 @@ def generate_signals(predictions_df: pd.DataFrame, k: int = 2) -> pd.DataFrame:
 
 ```python
 import pandas as pd
+import numpy as np
 
 def compute_portfolio_returns(
     signals_df: pd.DataFrame,
-    tc_bps: float = 5
+    tc_bps: float = 5,
+    k: int = 10
 ) -> pd.DataFrame:
     """
-    Daily equal-weighted long-short portfolio return.
-    tc_bps: cost per half-turn in basis points (paper baseline = 5 bps).
+    Daily equal-weighted long-short portfolio return with transaction costs.
+
+    Transaction cost model:
+    - TC per half-turn (buy or sell)
+    - Long<->Short flip = 2 half-turns
+    - Each position change affects 1/(2*k) of portfolio
+
+    Parameters:
+        signals_df: DataFrame with Date, Ticker, Signal, Return_NextDay
+        tc_bps: Cost per half-turn in basis points
+        k: Number of positions per side (for weight calculation)
     """
-    tc = tc_bps / 10_000
+    tc_per_turn = tc_bps / 10_000
     daily = []
     prev_signals = {}
 
@@ -603,16 +829,33 @@ def compute_portfolio_returns(
         short_ret = shorts['Return_NextDay'].mean() if len(shorts) > 0 else 0.0
         gross_ret = long_ret - short_ret
 
+        # Count position changes
         curr = dict(zip(group['Ticker'], group['Signal']))
-        turnover = sum(1 for t in curr if curr[t] != prev_signals.get(t))
-        net_ret  = gross_ret - turnover * tc
+        turnover = 0
+        for ticker, signal in curr.items():
+            prev = prev_signals.get(ticker, 'Hold')
+            if signal != prev:
+                if (signal == 'Long' and prev == 'Short') or \
+                   (signal == 'Short' and prev == 'Long'):
+                    turnover += 2  # flip = 2 half-turns
+                else:
+                    turnover += 1  # enter or exit = 1 half-turn
+
+        # TC as fraction of portfolio affected
+        tc = turnover * tc_per_turn / (2 * k) if k > 0 else 0
+        net_ret = gross_ret - tc
         prev_signals = curr
 
         daily.append({
-            'Date': date, 'Gross_Return': gross_ret,
-            'Net_Return': net_ret, 'Long_Return': long_ret,
-            'Short_Return': short_ret, 'TC': turnover * tc,
+            'Date': date,
+            'Gross_Return': gross_ret,
+            'Net_Return': net_ret,
+            'Long_Return': long_ret,
+            'Short_Return': short_ret,
+            'TC': tc,
+            'Turnover': turnover,
         })
+
     return pd.DataFrame(daily).set_index('Date')
 ```
 
@@ -626,7 +869,10 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
 
 def compute_metrics(returns_series: pd.Series, rf_daily: float = 0.00015) -> dict:
-    """rf_daily ~ 3.8% annual / 252 trading days."""
+    """
+    Compute risk-return metrics.
+    rf_daily ~ 3.8% annual / 252 trading days.
+    """
     r = returns_series.dropna()
     mean_d   = r.mean()
     std_d    = r.std()
@@ -638,6 +884,7 @@ def compute_metrics(returns_series: pd.Series, rf_daily: float = 0.00015) -> dic
     max_dd   = ((cum - cum.cummax()) / cum.cummax()).min()
     ann_ret  = (1 + mean_d) ** 252 - 1
     return {
+        'N Days':                 len(r),
         'Mean Daily Return (%)':  round(mean_d * 100, 4),
         'Annualized Return (%)':  round(ann_ret * 100, 2),
         'Annualized Std Dev (%)': round(std_d * np.sqrt(252) * 100, 2),
@@ -650,42 +897,83 @@ def compute_metrics(returns_series: pd.Series, rf_daily: float = 0.00015) -> dic
     }
 
 def evaluate_classification(y_true, y_prob, threshold: float = 0.5) -> dict:
+    """Compute classification metrics."""
     y_pred = (y_prob >= threshold).astype(int)
     return {
         'Accuracy (%)': round(accuracy_score(y_true, y_pred) * 100, 2),
-        'AUC-ROC':       round(roc_auc_score(y_true, y_prob), 4),
-        'F1 Score':      round(f1_score(y_true, y_pred), 4),
+        'AUC-ROC':      round(roc_auc_score(y_true, y_prob), 4),
+        'F1 Score':     round(f1_score(y_true, y_pred), 4),
     }
+
+def compute_subperiod_metrics(returns_df: pd.DataFrame) -> pd.DataFrame:
+    """Compute metrics for each market regime period."""
+    SUBPERIODS = {
+        'Pre-COVID':      ('2019-01-01', '2020-02-19'),
+        'COVID crash':    ('2020-02-20', '2020-04-30'),
+        'Recovery/bull':  ('2020-05-01', '2021-12-31'),
+        '2022 bear':      ('2022-01-01', '2022-12-31'),
+        '2023-24 AI rally': ('2023-01-01', '2024-12-31'),
+    }
+
+    results = []
+    for name, (start, end) in SUBPERIODS.items():
+        subset = returns_df.loc[start:end]
+        if len(subset) > 0:
+            metrics = compute_metrics(subset['Net_Return'])
+            metrics['Period'] = name
+            results.append(metrics)
+
+    return pd.DataFrame(results)
+
+def compute_tc_sensitivity(signals_df: pd.DataFrame, k: int = 10) -> pd.DataFrame:
+    """Compute performance across TC levels."""
+    TC_GRID = [0, 2, 5, 10, 15, 20, 25, 30]
+    results = []
+
+    for tc in TC_GRID:
+        from backtest.portfolio import compute_portfolio_returns
+        port = compute_portfolio_returns(signals_df, tc_bps=tc, k=k)
+        metrics = compute_metrics(port['Net_Return'])
+        metrics['TC (bps)'] = tc
+        results.append(metrics)
+
+    return pd.DataFrame(results)
 ```
 
 ---
 
-## Step 10 — main.py Skeleton
+## Step 10 — main.py Pipeline Overview
+
+The main pipeline orchestrates the full walk-forward validation process:
 
 ```python
-from pipeline.data_loader   import download_and_save
-from pipeline.features      import build_feature_matrix, FEATURE_COLS
-from pipeline.targets       import create_targets
-from pipeline.walk_forward  import generate_walk_forward_folds
-from pipeline.standardizer  import standardize_fold
-from models.baselines       import train_logistic, train_random_forest, train_xgboost
-from models.lstm_model      import StockLSTM, StockSequenceDataset, train_lstm
-from models.ensemble        import ensemble_predict
-from backtest.signals       import generate_signals
-from backtest.portfolio     import compute_portfolio_returns
-from backtest.metrics       import compute_metrics, evaluate_classification
-from config import *
-import pandas as pd, numpy as np, xgboost as xgb, torch
-from torch.utils.data import DataLoader
+# main.py (simplified overview)
 
+from config import *
+from pipeline.data_loader import download_and_save
+from pipeline.features import (
+    build_feature_matrix, compute_wavelet_thresholds,
+    apply_wavelet_denoising, recompute_features_from_denoised
+)
+from pipeline.targets import create_targets
+from pipeline.walk_forward import generate_walk_forward_folds
+from pipeline.standardizer import standardize_fold
+from models.baselines import train_logistic, train_random_forest, train_xgboost
+from models.lstm_model import train_lstm_a, train_lstm_b, prepare_lstm_a_sequences, prepare_lstm_b_sequences
+from backtest.signals import generate_signals
+from backtest.portfolio import compute_portfolio_returns
+from backtest.metrics import compute_metrics, evaluate_classification, compute_subperiod_metrics
+
+import torch
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-TARGET_COL = 'Target'
+
+ENABLE_LSTM_TUNING = False  # Set True for Phase 1+2 hyperparameter tuning
 
 def main():
-    data = download_and_save()
-    data = build_feature_matrix(data)
-    data = create_targets(data)
+    # 1. Load data (from cache or download fresh)
+    data = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
 
+    # 2. Generate walk-forward folds
     dates = sorted(data['Date'].unique())
     folds = generate_walk_forward_folds(dates, TRAIN_DAYS, VAL_DAYS, TEST_DAYS)
 
@@ -696,52 +984,79 @@ def main():
         df_v  = data[data['Date'].isin(dates[fold['val'][0]:fold['val'][1]])]
         df_ts = data[data['Date'].isin(dates[fold['test'][0]:fold['test'][1]])]
 
+        # 3. Wavelet denoising (if enabled)
+        if USE_WAVELET_DENOISING:
+            thresholds = compute_wavelet_thresholds(df_tr)
+            df_tr = apply_wavelet_denoising(df_tr, thresholds)
+            df_v  = apply_wavelet_denoising(df_v, thresholds)
+            df_ts = apply_wavelet_denoising(df_ts, thresholds)
+            # Recompute Close-dependent features and targets
+            df_tr = recompute_features_from_denoised(df_tr)
+            df_v  = recompute_features_from_denoised(df_v)
+            df_ts = recompute_features_from_denoised(df_ts)
+
+        # 4. Standardize (fit on train only)
         X_tr, X_v, X_ts, scaler = standardize_fold(
-            df_tr[FEATURE_COLS].values,
-            df_v[FEATURE_COLS].values,
-            df_ts[FEATURE_COLS].values,
+            df_tr[BASELINE_FEATURE_COLS].values,
+            df_v[BASELINE_FEATURE_COLS].values,
+            df_ts[BASELINE_FEATURE_COLS].values,
         )
-        y_tr = df_tr[TARGET_COL].values
 
+        # 5. Train baseline models
+        y_tr, y_v = df_tr[TARGET_COL].values, df_v[TARGET_COL].values
         lr_m  = train_logistic(X_tr, y_tr)
-        rf_m  = train_random_forest(X_tr, y_tr)
-        xgb_m = train_xgboost(X_tr, y_tr, X_v, df_v[TARGET_COL].values)
+        rf_m  = train_random_forest(X_tr, y_tr, X_v, y_v)
+        xgb_m = train_xgboost(X_tr, y_tr, X_v, y_v)
 
-        def scaled_df(df_orig, X_s):
-            d = df_orig.copy(); d[FEATURE_COLS] = X_s; return d
+        # 6. Train LSTM-A (4 features)
+        Xa_tr, ya_tr, Xa_ts, ya_ts, _, keys_a = prepare_lstm_a_sequences(
+            df_tr, df_v, df_ts, LSTM_A_FEATURE_COLS, TARGET_COL, SEQ_LEN)
+        lstm_a = train_lstm_a(Xa_tr, ya_tr, Xa_ts, device,
+                              tune=ENABLE_LSTM_TUNING)
 
-        lstm_m = StockLSTM(input_size=N_TOTAL_FEATURES)
-        lstm_m = train_lstm(
-            lstm_m,
-            DataLoader(StockSequenceDataset(scaled_df(df_tr, X_tr), FEATURE_COLS, TARGET_COL, SEQ_LEN), batch_size=LSTM_BATCH, shuffle=True),
-            DataLoader(StockSequenceDataset(scaled_df(df_v, X_v),   FEATURE_COLS, TARGET_COL, SEQ_LEN), batch_size=256),
-            device,
-        )
+        # 7. Train LSTM-B (6 features)
+        Xb_tr, yb_tr, Xb_ts, yb_ts, _, keys_b = prepare_lstm_b_sequences(
+            df_tr, df_v, df_ts, LSTM_B_FEATURE_COLS, TARGET_COL, SEQ_LEN)
+        lstm_b = train_lstm_b(Xb_tr, yb_tr, Xb_ts, device)
 
-        # Collect test predictions (align LSTM output with df_ts rows per ticker)
+        # 8. Collect predictions
         pred = df_ts.copy()
-        pred['Prob_LR']  = lr_m.predict_proba(X_ts)[:, 1]
-        pred['Prob_RF']  = rf_m.predict_proba(X_ts)[:, 1]
-        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts))
-        # LSTM: sequences skip first SEQ_LEN rows per ticker - handle alignment here
-        # See StockSequenceDataset for index mapping
-        pred['Prob_LSTM'] = np.nan  # TODO: fill with aligned LSTM predictions
+        pred['Prob_LR']     = lr_m.predict_proba(X_ts)[:, 1]
+        pred['Prob_RF']     = rf_m.predict_proba(X_ts)[:, 1]
+        pred['Prob_XGBoost'] = xgb_m.predict(xgb.DMatrix(X_ts))
+        # LSTM predictions aligned via keys_a, keys_b
+        pred['Prob_LSTM-A'] = align_lstm_predictions(lstm_a, Xa_ts, keys_a, pred)
+        pred['Prob_LSTM-B'] = align_lstm_predictions(lstm_b, Xb_ts, keys_b, pred)
+
         all_preds.append(pred)
 
-    full_preds   = pd.concat(all_preds)
-    signals_df   = generate_signals(full_preds.dropna(subset=['Prob_LSTM']), k=K_STOCKS)
-    port_returns = compute_portfolio_returns(signals_df, tc_bps=TC_BPS)
+    # 9. Backtest
+    full_preds = pd.concat(all_preds)
+    for model in MODEL_REGISTRY:
+        prob_col = f'Prob_{model}'
+        signals = generate_signals(full_preds, k=K_STOCKS, prob_col=prob_col)
+        port = compute_portfolio_returns(signals, tc_bps=TC_BPS, k=K_STOCKS)
+        print(f"\n=== {model} Performance ===")
+        print(compute_metrics(port['Net_Return']))
 
-    print("\n=== Final Portfolio Performance ===")
-    print(compute_metrics(port_returns['Net_Return']))
+    # 10. Save reports
+    # - table_T5_*.csv (gross/net returns)
+    # - table_T6_*.csv (sub-period performance)
+    # - table_T8_*.csv (classification metrics)
+    # - daily_returns_*.csv
+    # - signals_all_models.csv
+    # - backtest_summary.txt
 
 if __name__ == '__main__':
     main()
 ```
 
-> **LSTM sequence alignment note:** `StockSequenceDataset` drops the first `SEQ_LEN` rows per ticker
-> (no lookback available). Store `(Date, Ticker)` keys alongside sequences in the dataset, then map
-> predictions back to the correct rows in `df_ts`.
+**Key Implementation Notes:**
+
+1. **Wavelet denoising** is applied per-fold with thresholds computed from training data only.
+2. **Dual scaler approach:** LSTM-A uses 4 features, LSTM-B/baselines use 6 features.
+3. **LSTM sequence alignment:** Train data is used as lookback history for test predictions.
+4. **Per-model backtest:** Each model's performance is computed separately for comparison.
 
 ---
 
@@ -750,11 +1065,13 @@ if __name__ == '__main__':
 | Rule | How to enforce |
 |---|---|
 | Standardize on training data only | `scaler.fit_transform(X_train)`, then `.transform()` on val/test |
+| Wavelet thresholds from train only | `compute_wavelet_thresholds(df_train)`, apply to all splits |
 | Never shuffle time-series | `shuffle=False` for all val/test DataLoaders |
 | Tune hyperparameters on val, not test | All early stopping uses val loss only |
 | Features use only data <= t | All pandas rolling windows are causal (no `center=True`) |
 | Target uses only realized t+1 returns | `shift(-1)` on actual realized close prices |
 | No test period feedback | Test fold is evaluated only, never trained on |
+| LSTM lookback from train | Use train data as history when building test sequences |
 
 ---
 
@@ -762,17 +1079,17 @@ if __name__ == '__main__':
 
 ### Tables
 
-| # | Title | Mirrors |
+| # | Title | Output File |
 |---|---|---|
-| T1 | Descriptive stats per stock (mean, std, min, max, skew, kurt) | Krauss 2017 Table 1 |
-| T2 | Walk-forward fold dates | Both papers Section 3.1 |
-| T3 | Hyperparameter configurations (all models) | Both papers Section 3.3 |
-| T4 | Daily return characteristics — gross vs net | Fischer Table 3 / Krauss Table 2 |
-| T5 | Annualized risk-return metrics (all models) | Fischer Table 3 / Krauss Table 3 |
-| T6 | Sub-period performance breakdown | Krauss Table 5 |
-| T7 | TC sensitivity (0-30 bps grid) | New contribution |
-| T8 | Classification metrics: AUC, F1, Accuracy | Fischer Table 2 Panel B |
-| T9 | Top-15 most important features (RF/XGB) | Krauss Figure 3 |
+| T1 | Descriptive stats per stock (mean, std, min, max, skew, kurt) | Manual analysis |
+| T2 | Walk-forward fold dates | Printed during run |
+| T3 | Hyperparameter configurations (all models) | config.py |
+| T4 | Daily return characteristics — gross vs net | `daily_returns_*.csv` |
+| T5 | Annualized risk-return metrics (all models) | `table_T5_gross_returns.csv`, `table_T5_net_returns_5bps.csv` |
+| T6 | Sub-period performance breakdown | `table_T6_subperiod_performance.csv` |
+| T7 | TC sensitivity (0-30 bps grid) | `compute_tc_sensitivity()` |
+| T8 | Classification metrics: AUC, F1, Accuracy | `table_T8_classification_metrics.csv` |
+| T9 | Top-15 most important features (RF/XGB) | `rf.feature_importances_` |
 
 ### Figures
 
@@ -782,14 +1099,22 @@ if __name__ == '__main__':
 | F2 | LSTM architecture diagram | matplotlib / PowerPoint |
 | F3 | Cumulative equity curves (all models + buy-and-hold) | `(1 + r).cumprod()` |
 | F4 | Drawdown underwater chart | Rolling max drawdown, fill_between |
-| F5 | Feature importance bar chart (top 15) | `rf.feature_importances_` / XGB SHAP |
+| F5 | Feature importance bar chart (top 8) | `rf.feature_importances_` / XGB SHAP |
 | F6 | Return distribution (violin or box) | seaborn.violinplot per model |
 | F7 | Sharpe ratio vs transaction cost (0-30 bps) | Loop over TC values |
 | F8 | Confusion matrices (2x2 per model) | sklearn + seaborn heatmap |
 | F9 | Sub-period performance bar chart | seaborn.barplot by sub-period |
 | F10 | Correlation heatmap of stock returns | seaborn.heatmap(returns.corr()) |
 | F11 | LSTM train/val loss curves per fold | Save epoch losses during training |
-| F12 | Slippage sensitivity heatmap | Sharpe vs. (TC, slippage) grid |
+| F12 | Feature correlation heatmap | `analysis/feature_correlation.py` |
+
+### Generated Reports
+
+| File | Description |
+|---|---|
+| `reports/backtest_summary.txt` | Human-readable performance summary |
+| `reports/signals_all_models.csv` | All model signals for analysis |
+| `outputs/feature_selection_log.txt` | Feature correlation analysis log |
 
 ---
 
@@ -803,39 +1128,96 @@ if __name__ == '__main__':
 | 2022 bear market | 2022-01-01 to 2022-12-31 | Rate hikes, drawdowns |
 | 2023-2024 AI rally | 2023-01-01 to 2024-12-31 | AI / large-cap concentration |
 
-Compute `compute_metrics()` for each sub-period separately and report in T6 / F9.
+Note: 2015-2018 data is used for initial training folds but not explicitly analyzed as a
+sub-period since the walk-forward test periods begin in 2017.
+
+Compute `compute_subperiod_metrics()` and report in T6 / F9.
 
 ---
 
 ## Hyperparameter Reference
 
-| Parameter | Recommended | Paper Value | Range to Try |
-|---|---|---|---|
-| LSTM hidden units | 64 | 25 | 32, 64, 128 |
-| LSTM layers | 2 | 1 | 1, 2 |
-| LSTM dropout | 0.2 | 0.16 | 0.1, 0.2, 0.3 |
-| Sequence length | 60 | 240 | 40, 60, 90 |
-| Batch size | 128 | N/A | 64, 128, 256 |
-| Learning rate | 0.001 | RMSprop default | 0.01, 0.001, 0.0001 |
-| Early stopping patience | 15 | 10 | 10, 15, 20 |
-| RF n_estimators | 500 | 1000 | 300, 500, 1000 |
-| RF max_depth | 20 | 20 | 10, 20, None |
-| XGB n_rounds | 500 (early stop) | 100 | 200-1000 |
-| XGB eta | 0.05 | 0.1 | 0.01, 0.05, 0.1 |
-| XGB max_depth | 4 | 3 | 3, 4, 5, 6 |
-| LR regularization C | CV-selected | CV-selected | 1e-4 to 1e4 |
-| k (long/short stocks) | 2 | 10 (500 stocks) | 2, 3 |
+### LSTM-A (Bhandari-style tuning)
+
+| Parameter | Search Grid | Selected via |
+|---|---|---|
+| Optimizer | adam, adagrad, nadam | Phase 1 grid search |
+| Learning rate | 0.1, 0.01, 0.001 | Phase 1 grid search |
+| Batch size | 32, 64, 128 | Phase 1 grid search |
+| Hidden size | 16, 32, 64 | Phase 2 grid search |
+| Num layers | 1, 2 | Phase 2 grid search |
+| Dropout | 0.1, 0.2 | Phase 2 grid search |
+
+### LSTM-B (Fixed architecture)
+
+| Parameter | Value |
+|---|---|
+| Hidden size | 64 |
+| Num layers | 2 |
+| Dropout | 0.2 |
+| Learning rate | 0.001 |
+| Batch size | 128 |
+| Optimizer | Adam |
+| Sequence length | 60 |
+| Max epochs | 200 |
+| Early stopping patience | 15 |
+
+### XGBoost
+
+| Parameter | Grid | Default |
+|---|---|---|
+| max_depth | 3, 4, 5 | 4 |
+| eta | 0.01 | 0.01 |
+| subsample | 0.6, 0.7 | 0.7 |
+| colsample_bytree | 0.7 | 0.7 |
+| alpha (L1) | 0.1 | 0.1 |
+| lambda (L2) | 1.0 | 1.0 |
+| num_boost_round | 1000 (early stop) | - |
+| early_stopping_rounds | 50 | - |
+
+### Random Forest
+
+| Parameter | Grid |
+|---|---|
+| n_estimators | 300, 500 |
+| max_depth | 5, 10, 15 |
+| min_samples_leaf | 30, 50 |
+| max_features | sqrt |
+
+### Logistic Regression
+
+| Parameter | Grid |
+|---|---|
+| C (inverse regularization) | 1e-4, 1e-3, ..., 1e2 |
+| penalty | L2 |
+| CV | TimeSeriesSplit(5) |
+
+### Trading
+
+| Parameter | Value | Notes |
+|---|---|---|
+| k (long/short stocks) | 10 | 10 per side out of 105 |
+| TC (bps) | 5 | Per half-turn |
+| Signal smoothing alpha | 0.3 | EMA for turnover reduction |
+| Z-score normalization | True | Cross-sectional |
 
 ---
 
 ## Realistic Expectations
 
 - **Directional accuracy:** 51-54% is a solid result (random = 50%). Do not expect the papers' 53.8%.
-- **Sharpe ratio:** Positive but well below the papers' 5.83 — that number is driven by diversification across 500 stocks.
-- **LSTM vs RF:** On a small dataset (10 stocks), RF may outperform LSTM. This is itself a valid, discussable finding.
-- **Transaction cost sensitivity:** With only 10 stocks, turnover is high and TC erodes returns quickly. The TC sensitivity analysis (T7, F7) is one of your most important results.
-- **COVID crash (Feb-Apr 2020):** Expect a spike in returns — extreme cross-sectional dispersion creates exploitable patterns.
+- **Sharpe ratio:** With 105 stocks and k=10, better diversification than originally planned (10 stocks).
+  Still expect lower Sharpe than the papers' 5.83 (which used 500 stocks).
+- **LSTM-A vs LSTM-B:** LSTM-A with 4 features may underperform LSTM-B with 6 features due to
+  limited information. Both may underperform ensemble models. This is a valid finding.
+- **Wavelet denoising impact:** May improve or harm performance — report both scenarios.
+- **Transaction cost sensitivity:** With k=10 positions per side, turnover is more manageable than
+  with k=2. TC sensitivity analysis (T7, F7) remains important.
+- **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion
+  creates exploitable patterns.
 - **2022 bear market:** Expect elevated drawdown. Analyze separately in sub-period section.
+- **Sector diversification:** The 105-stock universe spans 10 sectors, providing natural
+  diversification. The SectorRelReturn feature captures relative performance within sectors.
 
 ---
 
@@ -843,7 +1225,9 @@ Compute `compute_metrics()` for each sub-period separately and report in T6 / F9
 
 - Fischer, T. & Krauss, C. (2017). *Deep learning with long short-term memory networks for financial market predictions.* FAU Discussion Papers in Economics, No. 11/2017.
 - Krauss, C., Do, X.A. & Huck, N. (2017). *Deep neural networks, gradient-boosted trees, random forests: Statistical arbitrage on the S&P 500.* European Journal of Operational Research, 259, 689-702.
+- Bhandari, H.N., et al. (2022). *Predicting stock market index using LSTM.* Machine Learning with Applications.
 - Hochreiter, S. & Schmidhuber, J. (1997). Long Short-Term Memory. *Neural Computation*, 9(8), 1735-1780.
 - Fama, E. (1970). Efficient Capital Markets: A Review of Theory and Empirical Work. *Journal of Finance*, 25(2), 383-417.
 - Chen, T. & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. *KDD 2016*.
 - Avellaneda, M. & Lee, J.H. (2010). Statistical arbitrage in the US equities market. *Quantitative Finance*, 10(7), 761-782.
+- Donoho, D.L. & Johnstone, I.M. (1994). Ideal spatial adaptation by wavelet shrinkage. *Biometrika*, 81(3), 425-455.

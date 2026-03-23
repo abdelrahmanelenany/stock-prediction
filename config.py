@@ -172,7 +172,7 @@ LSTM_TUNE_PATIENCE   = 5      # early stopping patience during tuning (paper §3
 LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
 
 # ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
-USE_WAVELET_DENOISING = False    # Set False to use raw prices (ablation study)
+USE_WAVELET_DENOISING = True    # Set False to use raw prices (ablation study)
 WAVELET_TYPE          = "haar"  # Paper uses Haar wavelets
 WAVELET_LEVEL         = 1       # Decomposition level; 1 is appropriate for daily data
 WAVELET_MODE          = "soft"  # Thresholding mode: 'soft' (paper) or 'hard'

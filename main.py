@@ -29,7 +29,10 @@ import torch
 from tqdm import tqdm
 
 from pipeline.data_loader import download_and_save
-from pipeline.features import build_feature_matrix, FEATURE_COLS
+from pipeline.features import (
+    build_feature_matrix, FEATURE_COLS,
+    compute_wavelet_thresholds, apply_wavelet_denoising, recompute_features_from_denoised,
+)
 from pipeline.targets import create_targets
 from pipeline.walk_forward import generate_walk_forward_folds, print_fold_summary
 from pipeline.standardizer import standardize_fold
@@ -86,7 +89,6 @@ def save_all_results(
         results_dict: {
             'gross':   list of metric dicts (one per model),
             'net_5':   list of metric dicts,
-            'net_10':  list of metric dicts,
             'classification': list of classification metric dicts,
             'subperiod': DataFrame of sub-period metrics,
         }
@@ -106,9 +108,6 @@ def save_all_results(
     )
     pd.DataFrame(results_dict['net_5']).to_csv(
         f'{reports_dir}/table_T5_net_returns_5bps.csv', index=False
-    )
-    pd.DataFrame(results_dict['net_10']).to_csv(
-        f'{reports_dir}/table_T5_net_returns_10bps.csv', index=False
     )
 
     # Table T8: Classification Metrics
@@ -155,7 +154,6 @@ def _format_summary(results_dict: dict) -> str:
     for label, key in [
         ("GROSS RETURNS (0 bps TC)", 'gross'),
         ("NET RETURNS  (5 bps TC)", 'net_5'),
-        ("NET RETURNS (10 bps TC)", 'net_10'),
     ]:
         lines.append(f"\n{'─' * 60}")
         lines.append(label)
@@ -253,6 +251,55 @@ def main(load_cached: bool = True):
         print(f'  Train: {len(df_tr):>6} rows | '
               f'Val: {len(df_v):>5} rows | '
               f'Test: {len(df_ts):>5} rows')
+
+        # ── Per-fold wavelet denoising (ANTI-LEAKAGE FIX) ─────────────────────
+        # 1. Threshold computed from training data only
+        # 2. Denoising applied to each split with training-derived threshold
+        # 3. CRITICAL: Recompute Return_NextDay and Target from denoised Return_1d
+        #    to ensure features, target, and backtest P&L all use the same price series
+        if config.USE_WAVELET_DENOISING:
+            print('  [Wavelet] Computing thresholds from training data...')
+            wavelet_thresholds = compute_wavelet_thresholds(df_tr)
+
+            # Concatenate all splits for causal feature recomputation
+            # This ensures rolling windows span across split boundaries correctly
+            df_all = pd.concat([df_tr, df_v, df_ts]).sort_values(['Ticker', 'Date'])
+            df_all = df_all.drop_duplicates(subset=['Date', 'Ticker']).reset_index(drop=True)
+
+            # Apply denoising to full series per ticker (using training thresholds)
+            df_all = apply_wavelet_denoising(df_all, thresholds=wavelet_thresholds)
+
+            # Recompute all Close-dependent features from denoised prices
+            print('  [Wavelet] Recomputing features from denoised Close...')
+            df_all = recompute_features_from_denoised(df_all)
+
+            # CRITICAL FIX: Recompute Return_NextDay and Target from denoised Return_1d
+            # This ensures target is based on same price series as features
+            print('  [Wavelet] Recomputing Return_NextDay and Target from denoised Return_1d...')
+            df_all = df_all.sort_values(['Ticker', 'Date']).reset_index(drop=True)
+            df_all['Return_NextDay'] = df_all.groupby('Ticker')['Return_1d'].shift(-1)
+
+            # Recompute cross-sectional median target
+            df_all = df_all.dropna(subset=['Return_NextDay']).reset_index(drop=True)
+            daily_median = df_all.groupby('Date')['Return_NextDay'].transform('median')
+            df_all['Target'] = (df_all['Return_NextDay'] >= daily_median).astype(int)
+
+            # Re-split back into train/val/test using date ranges
+            train_dates = set(dates[fold['train'][0]:fold['train'][1]])
+            val_dates = set(dates[fold['val'][0]:fold['val'][1]])
+            test_dates = set(dates[fold['test'][0]:fold['test'][1]])
+
+            df_tr = df_all[df_all['Date'].isin(train_dates)].reset_index(drop=True)
+            df_v = df_all[df_all['Date'].isin(val_dates)].reset_index(drop=True)
+            df_ts = df_all[df_all['Date'].isin(test_dates)].reset_index(drop=True)
+
+            # Drop rows with NaN from warm-up period after recomputation
+            df_tr = df_tr.dropna(subset=FEATURE_COLS).reset_index(drop=True)
+            df_v = df_v.dropna(subset=FEATURE_COLS).reset_index(drop=True)
+            df_ts = df_ts.dropna(subset=FEATURE_COLS).reset_index(drop=True)
+
+            print(f'  [Wavelet] After denoising: Train={len(df_tr)}, '
+                  f'Val={len(df_v)}, Test={len(df_ts)}')
 
         # ── Scaler B: fit on LSTM-B / baseline features (6 features) ──────
         # Baselines use the same scaler as LSTM-B for fair comparison
@@ -410,7 +457,6 @@ def main(load_cached: bool = True):
 
     port_returns_gross = {}
     port_returns_net_5 = {}
-    port_returns_net_10 = {}
     class_metrics = []
     all_signals = []
     daily_returns_gross = {'Date': None}
@@ -432,11 +478,9 @@ def main(load_cached: bool = True):
         # Compute portfolio returns at different TC levels
         port_gross = compute_portfolio_returns(sig_df, tc_bps=0, k=K_STOCKS)
         port_net_5 = compute_portfolio_returns(sig_df, tc_bps=5, k=K_STOCKS)
-        port_net_10 = compute_portfolio_returns(sig_df, tc_bps=10, k=K_STOCKS)
 
         port_returns_gross[model_name] = port_gross
         port_returns_net_5[model_name] = port_net_5
-        port_returns_net_10[model_name] = port_net_10
 
         # Store daily returns for export
         if daily_returns_gross['Date'] is None:
@@ -466,7 +510,6 @@ def main(load_cached: bool = True):
 
     results_gross = []
     results_net_5 = []
-    results_net_10 = []
 
     for model_name in model_cols.keys():
         if model_name not in port_returns_gross:
@@ -486,11 +529,6 @@ def main(load_cached: bool = True):
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-        # Net 10 bps
-        m = compute_metrics(port_returns_net_10[model_name]['Net_Return'])
-        m['Model'] = model_name
-        results_net_10.append(m)
-
     # ── Sub-period analysis (using the best performing model) ─────────────────
     subperiod_metrics = None
     if 'LSTM-A' in port_returns_net_5:
@@ -505,7 +543,6 @@ def main(load_cached: bool = True):
     results_dict = {
         'gross': results_gross,
         'net_5': results_net_5,
-        'net_10': results_net_10,
         'classification': class_metrics,
         'subperiod': subperiod_metrics,
     }
