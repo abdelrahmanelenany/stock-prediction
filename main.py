@@ -22,6 +22,7 @@ import os
 os.environ['OMP_NUM_THREADS'] = '1'  # Prevent XGBoost/PyTorch dual-OpenMP segfault
 
 import time
+import random
 import pandas as pd
 import numpy as np
 import xgboost as xgb
@@ -47,7 +48,7 @@ from backtest.signals import generate_signals
 from backtest.portfolio import compute_portfolio_returns
 from backtest.metrics import (
     compute_metrics, evaluate_classification,
-    compute_subperiod_metrics,
+    compute_subperiod_metrics, compute_daily_auc,
 )
 import config
 from config import (
@@ -59,6 +60,7 @@ from config import (
 )
 
 TARGET_COL = 'Target'
+CACHE_FEATURES_PATH = 'data/processed/features.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
@@ -69,6 +71,21 @@ device = (
     else torch.device('cpu')
 )
 print(f'Using device: {device}')
+
+
+def set_global_seed(seed: int):
+    """Set deterministic seeds across Python, NumPy, and PyTorch."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    # Keep deterministic mode best-effort to avoid runtime failures on unsupported ops.
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except Exception:
+        pass
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -162,6 +179,7 @@ def _format_summary(results_dict: dict) -> str:
             lines.append(
                 f"  {row['Model']:<12}  "
                 f"Sharpe={row['Sharpe Ratio']:>6.3f}  "
+                f"Sortino={row['Sortino Ratio']:>6.3f}  "
                 f"Ann.Ret={row['Annualized Return (%)']:>6.2f}%  "
                 f"MDD={row['Max Drawdown (%)']:>6.2f}%"
             )
@@ -198,15 +216,38 @@ def main(load_cached: bool = True):
     print(f"Scaler Type: {config.SCALER_TYPE}")
     print("=" * 60)
 
+    # Ensure run-to-run reproducibility for all stochastic components.
+    set_global_seed(config.RANDOM_SEED)
+
     # ── Steps 1-3: Data ─────────────────────────────────────────────────────
     if load_cached:
         print('\nLoading cached features.csv ...')
-        data = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
+        data = pd.read_csv(CACHE_FEATURES_PATH, parse_dates=['Date'])
         print(f'Loaded {len(data)} rows, {len(data.columns)} columns.')
+
+        # Backward compatibility: older caches may contain features but not targets.
+        # If enough columns exist, rebuild targets from cached Return_1d and persist.
+        missing_target_cols = [c for c in ['Return_NextDay', TARGET_COL] if c not in data.columns]
+        if missing_target_cols:
+            print(f"Cached file missing target columns: {missing_target_cols}")
+            if {'Date', 'Ticker', 'Return_1d'}.issubset(data.columns):
+                print('Recomputing Return_NextDay/Target from cached features...')
+                data = create_targets(data)
+                data.to_csv(CACHE_FEATURES_PATH, index=False)
+                print(f'Repaired and saved cache to {CACHE_FEATURES_PATH}')
+            else:
+                raise ValueError(
+                    'Cached features.csv is missing target columns and lacks the columns '
+                    "required to rebuild them ('Date', 'Ticker', 'Return_1d'). "
+                    'Run once with load_cached=False to regenerate cache.'
+                )
     else:
         raw = download_and_save()
         data = build_feature_matrix(raw)
         data = create_targets(data)
+        # Persist full dataset (features + Return_NextDay + Target) for future cached runs.
+        data.to_csv(CACHE_FEATURES_PATH, index=False)
+        print(f'Saved full cache (with targets) to {CACHE_FEATURES_PATH}')
 
     # Verify required columns
     required = FEATURE_COLS + [TARGET_COL, 'Return_NextDay', 'Date', 'Ticker']
@@ -243,6 +284,11 @@ def main(load_cached: bool = True):
         print(f'\n{"=" * 60}')
         print(f'=== Fold {fold["fold"]}/{len(folds)} ===')
         print('=' * 60)
+
+        # Use deterministic fold-specific seeds so reruns are stable while
+        # keeping each fold/model independent.
+        fold_seed_base = config.RANDOM_SEED + (fold['fold'] * 1000)
+        set_global_seed(fold_seed_base)
 
         df_tr = data[data['Date'].isin(dates[fold['train'][0]:fold['train'][1]])]
         df_v = data[data['Date'].isin(dates[fold['val'][0]:fold['val'][1]])]
@@ -353,6 +399,7 @@ def main(load_cached: bool = True):
                 input_size=len(LSTM_A_FEATURES),
                 device=device,
                 arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
+                seed=fold_seed_base + 10,
             )
             tuning_results.append({
                 'fold': fold['fold'],
@@ -376,12 +423,14 @@ def main(load_cached: bool = True):
                 num_layers=best_hp_a['num_layers'],
                 dropout=best_hp_a['dropout'],
                 batch_size=best_hp_a['batch_size'],
+                seed=fold_seed_base + 20,
             )
         else:
             model_a = train_lstm_a(
                 X_tr_a[:val_split], y_tr_a[:val_split],
                 X_tr_a[val_split:], y_tr_a[val_split:],
-                device
+                device,
+                seed=fold_seed_base + 20,
             )
         print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
 
@@ -407,7 +456,8 @@ def main(load_cached: bool = True):
         model_b = train_lstm_b(
             X_tr_b[:val_split], y_tr_b[:val_split],
             X_tr_b[val_split:], y_tr_b[val_split:],
-            device
+            device,
+            seed=fold_seed_base + 30,
         )
         print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
 
@@ -489,10 +539,16 @@ def main(load_cached: bool = True):
         daily_returns_gross[model_name] = port_gross['Gross_Return'].values
         daily_returns_net_5[model_name] = port_net_5['Net_Return'].values
 
-        # Classification metrics
+        # Classification metrics (pooled + daily AUC for diagnostic)
         y_true = valid_preds[TARGET_COL].values
         y_prob = valid_preds[prob_col].values
         cm = evaluate_classification(y_true, y_prob)
+
+        # Add daily AUC to diagnose pooled vs within-day ranking
+        daily_auc = compute_daily_auc(valid_preds, prob_col, TARGET_COL)
+        cm['Daily AUC (mean)'] = daily_auc['Daily AUC (mean)']
+        cm['Daily AUC (std)'] = daily_auc['Daily AUC (std)']
+
         cm['Model'] = model_name
         class_metrics.append(cm)
 
@@ -500,6 +556,7 @@ def main(load_cached: bool = True):
         m = compute_metrics(port_gross['Gross_Return'])
         print(f'  {model_name:<12}  '
               f'Sharpe={m["Sharpe Ratio"]:>6.3f}  '
+              f'Sortino={m["Sortino Ratio"]:>6.3f}  '
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
@@ -526,6 +583,7 @@ def main(load_cached: bool = True):
         results_net_5.append(m)
         print(f'  {model_name:<12}  '
               f'Sharpe={m["Sharpe Ratio"]:>6.3f}  '
+              f'Sortino={m["Sortino Ratio"]:>6.3f}  '
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
@@ -573,4 +631,4 @@ def main(load_cached: bool = True):
 
 
 if __name__ == '__main__':
-    main(load_cached=False)
+    main(load_cached=True)

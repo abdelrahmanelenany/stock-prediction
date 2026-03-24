@@ -11,6 +11,7 @@ Implements Bhandari §3.3 hyperparameter tuning (Section 1 of IMPLEMENTATION_EXT
 - Phase 2 (LSTM-A only): tune architecture (hidden_size, num_layers, dropout)
 """
 import itertools
+import random
 import numpy as np
 import pandas as pd
 import torch
@@ -24,6 +25,22 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import config
+
+
+def _seed_everything(seed: int):
+    """Seed all RNGs used by LSTM training for reproducible runs."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _make_torch_generator(seed: int) -> torch.Generator:
+    """Create a seeded CPU generator for deterministic DataLoader shuffling."""
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    return gen
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -48,7 +65,7 @@ def _build_optimizer(model, name: str, lr: float):
 def _run_tuning_replicates(
     X_train, y_train, X_val, y_val, device,
     opt_name, lr, bs, input_size, hidden_size, num_layers, dropout,
-    max_epochs, patience,
+    max_epochs, patience, seed,
 ):
     """
     Run cfg.LSTM_TUNE_REPLICATES independent training runs for one hyperparameter
@@ -59,10 +76,15 @@ def _run_tuning_replicates(
 
     train_ds = TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
     val_ds = TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val))
-    train_dl = DataLoader(train_ds, batch_size=bs, shuffle=True)
-    val_dl = DataLoader(val_ds, batch_size=bs * 2, shuffle=False)
 
     for rep in range(n_replicates):
+        rep_seed = seed + rep
+        _seed_everything(rep_seed)
+        train_gen = _make_torch_generator(rep_seed)
+
+        train_dl = DataLoader(train_ds, batch_size=bs, shuffle=True, generator=train_gen)
+        val_dl = DataLoader(val_ds, batch_size=bs * 2, shuffle=False)
+
         model = StockLSTMTunable(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -122,6 +144,7 @@ def tune_lstm_hyperparams(
     input_size, device,
     arch_grid=None,
     seed_hidden=64, seed_layers=2, seed_dropout=0.2,
+    seed=None,
 ):
     """
     Bhandari §3.3 Algorithm 1 + Algorithm 2 — adapted for classification
@@ -159,6 +182,9 @@ def tune_lstm_hyperparams(
     -------
     dict with keys: optimizer, lr, batch_size, hidden_size, num_layers, dropout
     """
+    if seed is None:
+        seed = config.RANDOM_SEED
+
     # ── Phase 1: tune training hyperparameters ────────────────────────────────
     grid = config.LSTM_HYPERPARAM_GRID
     combos = list(itertools.product(
@@ -186,6 +212,7 @@ def tune_lstm_hyperparams(
             hidden_size=p1_hidden, num_layers=p1_layers, dropout=p1_drop,
             max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
             patience=config.LSTM_TUNE_PATIENCE,
+            seed=seed,
         )
         avg_auc = sum(auc_scores) / len(auc_scores)
         phase1_results.append({
@@ -222,6 +249,7 @@ def tune_lstm_hyperparams(
             hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
             max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
             patience=config.LSTM_TUNE_PATIENCE,
+            seed=seed + 10_000,
         )
         avg_auc = sum(auc_scores) / len(auc_scores)
         phase2_results.append({
@@ -590,7 +618,7 @@ def _clear_mps_cache():
 
 def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
                      optimizer, criterion, max_epochs, patience, desc,
-                     batch_size=None):
+                     batch_size=None, seed=None):
     """
     Internal training loop with batched validation for memory efficiency.
     Returns trained model with best validation loss weights restored.
@@ -608,7 +636,17 @@ def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
     # Determine batch size
     if batch_size is None:
         batch_size = config.LSTM_A_BATCH if desc == "LSTM-A" else config.LSTM_B_BATCH
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+
+    if seed is None:
+        seed = config.RANDOM_SEED
+    train_gen = _make_torch_generator(seed)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=train_gen,
+    )
     val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False)
 
     best_val_loss = float('inf')
@@ -658,7 +696,7 @@ def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
 
 def train_lstm_a(X_train, y_train, X_val, y_val, device,
                  optimizer_name=None, lr=None, hidden_size=None,
-                 num_layers=None, dropout=None, batch_size=None):
+                 num_layers=None, dropout=None, batch_size=None, seed=None):
     """
     Trains LSTM-A using specified or default hyperparameters.
     Returns trained model with best validation loss weights restored.
@@ -686,6 +724,8 @@ def train_lstm_a(X_train, y_train, X_val, y_val, device,
     drop = dropout or config.LSTM_A_ARCH_GRID["dropout"][0]
 
     n_feat = len(config.LSTM_A_FEATURES)
+    train_seed = config.RANDOM_SEED if seed is None else seed
+    _seed_everything(train_seed)
 
     # Try with the given device first
     try:
@@ -702,7 +742,7 @@ def train_lstm_a(X_train, y_train, X_val, y_val, device,
         return _train_lstm_impl(
             model, X_train, y_train, X_val, y_val, device,
             optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-            config.LSTM_A_PATIENCE, "LSTM-A", bs
+            config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
@@ -722,13 +762,14 @@ def train_lstm_a(X_train, y_train, X_val, y_val, device,
             return _train_lstm_impl(
                 model, X_train, y_train, X_val, y_val, cpu_device,
                 optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-                config.LSTM_A_PATIENCE, "LSTM-A", bs
+                config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed
             )
         raise
 
 
 def _train_lstm_b_impl(model, X_train, y_train, X_val, y_val, device,
-                        optimizer, scheduler, criterion, max_epochs, patience):
+                        optimizer, scheduler, criterion, max_epochs, patience,
+                        seed=None):
     """
     Internal training loop for LSTM-B with batched validation and scheduler.
     """
@@ -742,7 +783,16 @@ def _train_lstm_b_impl(model, X_train, y_train, X_val, y_val, device,
     )
 
     batch_size = config.LSTM_B_BATCH
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    if seed is None:
+        seed = config.RANDOM_SEED
+    train_gen = _make_torch_generator(seed)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=train_gen,
+    )
     val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False)
 
     best_val_loss = float('inf')
@@ -791,13 +841,15 @@ def _train_lstm_b_impl(model, X_train, y_train, X_val, y_val, device,
     return model
 
 
-def train_lstm_b(X_train, y_train, X_val, y_val, device):
+def train_lstm_b(X_train, y_train, X_val, y_val, device, seed=None):
     """
     Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
     Returns trained model with best validation loss weights restored.
     Falls back to CPU if MPS runs out of memory.
     """
     _clear_mps_cache()
+    train_seed = config.RANDOM_SEED if seed is None else seed
+    _seed_everything(train_seed)
 
     def _create_model_and_optim(dev):
         model = LSTMModelB().to(dev)
@@ -820,7 +872,8 @@ def train_lstm_b(X_train, y_train, X_val, y_val, device):
         return _train_lstm_b_impl(
             model, X_train, y_train, X_val, y_val, device,
             optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
-            config.LSTM_B_PATIENCE
+            config.LSTM_B_PATIENCE,
+            seed=train_seed,
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
@@ -831,7 +884,8 @@ def train_lstm_b(X_train, y_train, X_val, y_val, device):
             return _train_lstm_b_impl(
                 model, X_train, y_train, X_val, y_val, cpu_device,
                 optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
-                config.LSTM_B_PATIENCE
+                config.LSTM_B_PATIENCE,
+                seed=train_seed,
             )
         raise
 

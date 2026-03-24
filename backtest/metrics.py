@@ -61,10 +61,16 @@ def compute_metrics(
     )
 
     downside = r[r < rf_daily]
-    sortino  = (
-        ((mean_d - rf_daily) / downside.std()) * np.sqrt(252)
-        if len(downside) > 1 else 0.0
-    )
+    if len(downside) > 1:
+        downside_std = downside.std()
+        if downside_std > 0:
+            sortino = ((mean_d - rf_daily) / downside_std) * np.sqrt(252)
+        else:
+            # All downside returns are identical (zero variance)
+            sortino = np.inf if (mean_d - rf_daily) > 0 else 0.0
+    else:
+        # No downside periods (all returns >= rf_daily) = infinite risk-adjusted return
+        sortino = np.inf if (mean_d - rf_daily) > 0 else 0.0
 
     cum     = (1 + r).cumprod()
     max_dd  = ((cum - cum.cummax()) / cum.cummax()).min()
@@ -103,6 +109,70 @@ def evaluate_classification(
         'Accuracy (%)': round(accuracy_score(y_true, y_pred) * 100, 2),
         'AUC-ROC':      round(roc_auc_score(y_true, y_prob), 4),
         'F1 Score':     round(f1_score(y_true, y_pred), 4),
+    }
+
+
+def compute_daily_auc(
+    predictions_df: pd.DataFrame,
+    prob_col: str,
+    target_col: str = 'Target',
+) -> dict:
+    """
+    Compute average AUC-ROC per day (cross-sectional ranking quality).
+
+    This metric is more appropriate for ranking strategies than pooled AUC
+    because it measures within-day ranking ability, which is what the
+    signal generation actually uses.
+
+    NOTE: Pooled AUC (from evaluate_classification) may differ from daily AUC
+    because pooled AUC measures global ranking while daily AUC measures
+    within-day ranking. A model can have good within-day ranking (high Sharpe)
+    but poor global ranking (low pooled AUC) if its probability calibration
+    varies across days.
+
+    Parameters
+    ----------
+    predictions_df : pd.DataFrame
+        Must contain Date, prob_col, and target_col columns.
+    prob_col : str
+        Column name for predicted probabilities.
+    target_col : str
+        Column name for ground truth labels.
+
+    Returns
+    -------
+    dict with:
+        - 'Daily AUC (mean)': average daily AUC
+        - 'Daily AUC (std)': standard deviation of daily AUC
+        - 'Days with valid AUC': number of days with computable AUC
+    """
+    daily_aucs = []
+
+    for date, group in predictions_df.groupby('Date'):
+        y_true = group[target_col].values
+        y_prob = group[prob_col].values
+
+        # AUC requires both classes present
+        if len(np.unique(y_true)) < 2:
+            continue
+
+        try:
+            auc = roc_auc_score(y_true, y_prob)
+            daily_aucs.append(auc)
+        except ValueError:
+            continue
+
+    if len(daily_aucs) == 0:
+        return {
+            'Daily AUC (mean)': np.nan,
+            'Daily AUC (std)': np.nan,
+            'Days with valid AUC': 0,
+        }
+
+    return {
+        'Daily AUC (mean)': round(np.mean(daily_aucs), 4),
+        'Daily AUC (std)': round(np.std(daily_aucs), 4),
+        'Days with valid AUC': len(daily_aucs),
     }
 
 
