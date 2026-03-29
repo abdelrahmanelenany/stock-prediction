@@ -9,5 +9,4 @@ __pycache__/
 # Generated data and reports (large, nonessential)
 data/
 reports/
-.github/agents
-.github/skills
+reports_exp/

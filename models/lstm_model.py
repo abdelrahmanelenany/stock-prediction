@@ -11,7 +11,13 @@ Implements Bhandari §3.3 hyperparameter tuning (Section 1 of IMPLEMENTATION_EXT
 - Phase 2 (LSTM-A only): tune architecture (hidden_size, num_layers, dropout)
 """
 import itertools
+import logging
+import os
 import random
+import sys
+import csv
+from typing import Any, Optional
+
 import numpy as np
 import pandas as pd
 import torch
@@ -20,11 +26,12 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score
 from tqdm import tqdm
-import sys
-import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import config
+from evaluation.metrics_utils import binary_auc_safe
+
+logger = logging.getLogger(__name__)
 
 
 def _seed_everything(seed: int):
@@ -508,6 +515,158 @@ def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
     return X_train, y_train, X_test, y_test, keys_train, keys_test
 
 
+def prepare_lstm_a_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
+                                             val_ratio: float = 0.2):
+    """
+    Build LSTM-A sequences with TEMPORAL train/val split.
+
+    FIX: Instead of splitting by index (which splits by ticker), this function
+    splits by DATE - the last val_ratio of training DATES become validation.
+
+    Args:
+        df_train: DataFrame with columns [Date, Ticker, *LSTM_A_FEATURES, Target]
+        df_test:  DataFrame with same columns
+        val_ratio: Fraction of training dates to use for validation (default 0.2)
+
+    Returns:
+        X_train, y_train: Training sequences
+        X_val, y_val: Validation sequences (last 20% of dates)
+        X_test, y_test: Test sequences
+        keys_train, keys_val, keys_test: (date, ticker) tuples for alignment
+    """
+    seq_len = config.LSTM_A_SEQ_LEN
+    feature_cols = config.LSTM_A_FEATURES
+
+    # Split training dates temporally
+    train_dates_sorted = sorted(df_train['Date'].unique())
+    n_dates = len(train_dates_sorted)
+    val_start_idx = int(n_dates * (1 - val_ratio))
+
+    train_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
+                         for d in train_dates_sorted[:val_start_idx])
+    val_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
+                       for d in train_dates_sorted[val_start_idx:])
+
+    # Fit scaler on TRUE training data only (excluding validation dates)
+    df_true_train = df_train[df_train['Date'].isin(train_dates_sorted[:val_start_idx])]
+    scaler = StandardScaler()
+    scaler.fit(df_true_train[feature_cols].values)
+
+    # Apply scaler to all data
+    df_train = df_train.copy()
+    df_test = df_test.copy()
+    df_train[feature_cols] = scaler.transform(df_train[feature_cols].values)
+    df_test[feature_cols] = scaler.transform(df_test[feature_cols].values)
+
+    # Build ALL sequences from training data
+    X_all, y_all, keys_all = _build_sequences_multi(df_train, seq_len, feature_cols)
+
+    # Split sequences by DATE (not by index!)
+    X_train_list, y_train_list, keys_train = [], [], []
+    X_val_list, y_val_list, keys_val = [], [], []
+
+    for i, (date, ticker) in enumerate(keys_all):
+        date_str = pd.Timestamp(date).strftime('%Y-%m-%d')
+        if date_str in train_date_set:
+            X_train_list.append(X_all[i])
+            y_train_list.append(y_all[i])
+            keys_train.append((date, ticker))
+        elif date_str in val_date_set:
+            X_val_list.append(X_all[i])
+            y_val_list.append(y_all[i])
+            keys_val.append((date, ticker))
+
+    X_train = np.array(X_train_list, dtype=np.float32) if X_train_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
+    y_train = np.array(y_train_list, dtype=np.int64) if y_train_list else np.zeros(0, dtype=np.int64)
+    X_val = np.array(X_val_list, dtype=np.float32) if X_val_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
+    y_val = np.array(y_val_list, dtype=np.int64) if y_val_list else np.zeros(0, dtype=np.int64)
+
+    # Build test sequences using full train data as lookback history
+    test_dates = set(df_test['Date'].apply(lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')))
+    df_combined = pd.concat([df_train, df_test], ignore_index=True)
+    X_test, y_test, keys_test = _build_sequences_multi_with_lookback(
+        df_combined, seq_len, feature_cols, test_dates
+    )
+
+    return X_train, y_train, X_val, y_val, X_test, y_test, keys_train, keys_val, keys_test
+
+
+def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
+                                             val_ratio: float = 0.2):
+    """
+    Build LSTM-B sequences with TEMPORAL train/val split.
+
+    FIX: Instead of splitting by index (which splits by ticker), this function
+    splits by DATE - the last val_ratio of training DATES become validation.
+
+    Args:
+        df_train: DataFrame with columns [Date, Ticker, *LSTM_B_FEATURES, Target]
+        df_test:  DataFrame with same columns
+        val_ratio: Fraction of training dates to use for validation (default 0.2)
+
+    Returns:
+        X_train, y_train: Training sequences
+        X_val, y_val: Validation sequences (last 20% of dates)
+        X_test, y_test: Test sequences
+        keys_train, keys_val, keys_test: (date, ticker) tuples for alignment
+    """
+    seq_len = config.LSTM_B_SEQ_LEN
+    feature_cols = config.LSTM_B_FEATURES
+
+    # Split training dates temporally
+    train_dates_sorted = sorted(df_train['Date'].unique())
+    n_dates = len(train_dates_sorted)
+    val_start_idx = int(n_dates * (1 - val_ratio))
+
+    train_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
+                         for d in train_dates_sorted[:val_start_idx])
+    val_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
+                       for d in train_dates_sorted[val_start_idx:])
+
+    # Fit scaler on TRUE training data only (excluding validation dates)
+    df_true_train = df_train[df_train['Date'].isin(train_dates_sorted[:val_start_idx])]
+    scaler = StandardScaler()
+    scaler.fit(df_true_train[feature_cols].values)
+
+    # Apply scaler to all data
+    df_train = df_train.copy()
+    df_test = df_test.copy()
+    df_train[feature_cols] = scaler.transform(df_train[feature_cols].values)
+    df_test[feature_cols] = scaler.transform(df_test[feature_cols].values)
+
+    # Build ALL sequences from training data
+    X_all, y_all, keys_all = _build_sequences_multi(df_train, seq_len, feature_cols)
+
+    # Split sequences by DATE (not by index!)
+    X_train_list, y_train_list, keys_train = [], [], []
+    X_val_list, y_val_list, keys_val = [], [], []
+
+    for i, (date, ticker) in enumerate(keys_all):
+        date_str = pd.Timestamp(date).strftime('%Y-%m-%d')
+        if date_str in train_date_set:
+            X_train_list.append(X_all[i])
+            y_train_list.append(y_all[i])
+            keys_train.append((date, ticker))
+        elif date_str in val_date_set:
+            X_val_list.append(X_all[i])
+            y_val_list.append(y_all[i])
+            keys_val.append((date, ticker))
+
+    X_train = np.array(X_train_list, dtype=np.float32) if X_train_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
+    y_train = np.array(y_train_list, dtype=np.int64) if y_train_list else np.zeros(0, dtype=np.int64)
+    X_val = np.array(X_val_list, dtype=np.float32) if X_val_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
+    y_val = np.array(y_val_list, dtype=np.int64) if y_val_list else np.zeros(0, dtype=np.int64)
+
+    # Build test sequences using full train data as lookback history
+    test_dates = set(df_test['Date'].apply(lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')))
+    df_combined = pd.concat([df_train, df_test], ignore_index=True)
+    X_test, y_test, keys_test = _build_sequences_multi_with_lookback(
+        df_combined, seq_len, feature_cols, test_dates
+    )
+
+    return X_train, y_train, X_val, y_val, X_test, y_test, keys_train, keys_val, keys_test
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Model Architectures
 # ────────────────────────────────────────────────────────────────────────────
@@ -616,24 +775,67 @@ def _clear_mps_cache():
             pass
 
 
-def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
-                     optimizer, criterion, max_epochs, patience, desc,
-                     batch_size=None, seed=None):
+def _eval_loader_loss_auc(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    criterion: nn.Module,
+) -> tuple[float, Optional[float]]:
+    """Mean loss and ROC-AUC (positive class prob vs labels) on a loader."""
+    model.eval()
+    total_loss = 0.0
+    n = 0
+    probs_list: list[np.ndarray] = []
+    labels_list: list[np.ndarray] = []
+    with torch.no_grad():
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            logits = model(xb)
+            loss = criterion(logits, yb)
+            total_loss += loss.item() * len(yb)
+            n += len(yb)
+            pr = torch.softmax(logits, dim=1)[:, 1]
+            probs_list.append(pr.cpu().numpy())
+            labels_list.append(yb.cpu().numpy())
+    mean_loss = total_loss / max(n, 1)
+    if not probs_list:
+        return mean_loss, None
+    y_score = np.concatenate(probs_list)
+    y_true = np.concatenate(labels_list)
+    auc = binary_auc_safe(y_true, y_score, log_on_fail=False)
+    return mean_loss, auc
+
+
+def _train_lstm_impl(
+    model: nn.Module,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    X_val: np.ndarray,
+    y_val: np.ndarray,
+    device: torch.device,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
+    max_epochs: int,
+    patience: int,
+    desc: str,
+    batch_size: int | None = None,
+    seed: int | None = None,
+    lr_scheduler: Any | None = None,
+    fold_idx: int | None = None,
+) -> nn.Module:
     """
-    Internal training loop with batched validation for memory efficiency.
-    Returns trained model with best validation loss weights restored.
+    Training loop with per-epoch train/val loss, AUC, LR logging, optional CSV,
+    gradient norm audit, and heuristic warnings (flat AUC, train/val loss gap).
     """
-    # Use DataLoaders for both train and validation (memory efficient)
     train_dataset = TensorDataset(
         torch.FloatTensor(X_train),
-        torch.LongTensor(y_train)
+        torch.LongTensor(y_train),
     )
     val_dataset = TensorDataset(
         torch.FloatTensor(X_val),
-        torch.LongTensor(y_val)
+        torch.LongTensor(y_val),
     )
 
-    # Determine batch size
     if batch_size is None:
         batch_size = config.LSTM_A_BATCH if desc == "LSTM-A" else config.LSTM_B_BATCH
 
@@ -649,54 +851,190 @@ def _train_lstm_impl(model, X_train, y_train, X_val, y_val, device,
     )
     val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False)
 
-    best_val_loss = float('inf')
-    best_state = None
+    max_grad_norm = getattr(config, "LSTM_MAX_GRAD_NORM", None)
+    audit_grad = getattr(config, "LSTM_AUDIT_GRAD_NORM", False)
+    log_every = getattr(config, "LSTM_LOG_EVERY_EPOCH", True)
+    save_csv = getattr(config, "LSTM_SAVE_TRAINING_CSV", False)
+    flat_n = getattr(config, "LSTM_FLAT_AUC_WARN_epochs", 8)
+    flat_eps = getattr(config, "LSTM_FLAT_AUC_EPS", 0.02)
+    of_ratio = getattr(config, "LSTM_OVERFIT_LOSS_RATIO", 3.0)
+    of_n = getattr(config, "LSTM_OVERFIT_WARN_epochs", 6)
+
+    epoch_rows: list[dict[str, Any]] = []
+    best_val_loss = float("inf")
+    best_state: dict | None = None
+    best_epoch = -1
     patience_ctr = 0
+    flat_streak = 0
+    flat_warned = False
+    of_streak = 0
+    of_warned = False
+    stop_reason = "max_epochs"
+    epoch = -1
 
     with tqdm(range(max_epochs), desc=desc, unit="epoch") as pbar:
         for epoch in pbar:
             model.train()
+            train_loss_sum = 0.0
+            train_count = 0
+            last_gnorm: float | None = None
+
             for xb, yb in train_loader:
                 xb, yb = xb.to(device), yb.to(device)
                 optimizer.zero_grad()
                 loss = criterion(model(xb), yb)
                 loss.backward()
-                optimizer.step()
 
-            # Batched validation for memory efficiency
-            model.eval()
-            val_loss_sum = 0.0
-            val_count = 0
-            with torch.no_grad():
-                for xb, yb in val_loader:
-                    xb, yb = xb.to(device), yb.to(device)
-                    loss = criterion(model(xb), yb)
-                    val_loss_sum += loss.item() * len(yb)
-                    val_count += len(yb)
-            val_loss = val_loss_sum / val_count
+                if max_grad_norm is not None:
+                    gnorm_t = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), float(max_grad_norm)
+                    )
+                else:
+                    gnorm_t = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), float("inf")
+                    )
+                last_gnorm = float(gnorm_t)
+
+                if audit_grad and last_gnorm is not None:
+                    if last_gnorm < 1e-6 or last_gnorm > 1e3:
+                        logger.warning(
+                            "[%s] epoch %s gradient norm=%.4e (vanish/explode check)",
+                            desc,
+                            epoch + 1,
+                            last_gnorm,
+                        )
+
+                optimizer.step()
+                train_loss_sum += loss.item() * len(yb)
+                train_count += len(yb)
+
+            train_loss_batch = train_loss_sum / max(train_count, 1)
+
+            tr_eval_loss, tr_auc = _eval_loader_loss_auc(
+                model, train_loader, device, criterion
+            )
+            val_loss, val_auc = _eval_loader_loss_auc(
+                model, val_loader, device, criterion
+            )
+
+            if lr_scheduler is not None:
+                lr_scheduler.step(val_loss)
+            lr = float(optimizer.param_groups[0]["lr"])
+
+            row = {
+                "epoch": epoch + 1,
+                "train_loss_batch": round(train_loss_batch, 6),
+                "train_eval_loss": round(tr_eval_loss, 6),
+                "val_loss": round(val_loss, 6),
+                "train_auc": tr_auc,
+                "val_auc": val_auc,
+                "lr": lr,
+                "grad_norm_last": last_gnorm,
+            }
+            epoch_rows.append(row)
+
+            if log_every:
+                au = f" tr_auc={tr_auc:.4f} va_auc={val_auc:.4f}" if tr_auc is not None and val_auc is not None else ""
+                logger.info(
+                    "[%s] epoch %d/%d train_loss=%.5f tr_eval=%.5f val_loss=%.5f lr=%.2e%s",
+                    desc,
+                    epoch + 1,
+                    max_epochs,
+                    train_loss_batch,
+                    tr_eval_loss,
+                    val_loss,
+                    lr,
+                    au,
+                )
+
+            if tr_auc is not None and val_auc is not None:
+                if (
+                    abs(tr_auc - 0.5) < flat_eps
+                    and abs(val_auc - 0.5) < flat_eps
+                ):
+                    flat_streak += 1
+                else:
+                    flat_streak = 0
+                if flat_streak >= flat_n and not flat_warned:
+                    logger.warning(
+                        "[%s] Train and val AUC near 0.5 for %d consecutive epochs (no discrimination).",
+                        desc,
+                        flat_streak,
+                    )
+                    flat_warned = True
+
+            if tr_eval_loss > 1e-12 and val_loss > of_ratio * tr_eval_loss:
+                of_streak += 1
+            else:
+                of_streak = 0
+            if of_streak >= of_n and not of_warned:
+                logger.warning(
+                    "[%s] Val loss >> train eval loss for %d epochs (possible overfitting).",
+                    desc,
+                    of_streak,
+                )
+                of_warned = True
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                # Store state on CPU to save GPU memory
+                best_epoch = epoch + 1
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 patience_ctr = 0
             else:
                 patience_ctr += 1
                 if patience_ctr >= patience:
-                    pbar.set_postfix({"val_loss": f"{best_val_loss:.4f}", "status": "early stop"})
+                    stop_reason = "early_stop_patience"
+                    pbar.set_postfix(
+                        {"val_loss": f"{best_val_loss:.4f}", "status": "early stop"}
+                    )
                     break
 
-            pbar.set_postfix({"val_loss": f"{val_loss:.4f}", "best": f"{best_val_loss:.4f}"})
+            pbar.set_postfix(
+                {"val_loss": f"{val_loss:.4f}", "best": f"{best_val_loss:.4f}"}
+            )
+
+    if best_state is None:
+        best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        best_epoch = epoch + 1
 
     model.load_state_dict(best_state)
     model.to(device)
-    print(f"  [{desc}] epoch {epoch+1}/{max_epochs} — early stop | val_loss={best_val_loss:.4f}")
+
+    print(
+        f"  [{desc}] stopped: {stop_reason} | best_epoch={best_epoch} "
+        f"| best_val_loss={best_val_loss:.4f}"
+    )
+
+    if save_csv and epoch_rows:
+        tag = desc.replace(" ", "_").lower()
+        fd = fold_idx if fold_idx is not None else "na"
+        out_dir = os.path.join(os.path.dirname(__file__), "..", "reports", "training_logs")
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"fold{fd}_{tag}.csv")
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(epoch_rows[0].keys()))
+            w.writeheader()
+            w.writerows(epoch_rows)
+        print(f"  [{desc}] training log: {path}")
+
     return model
 
 
-def train_lstm_a(X_train, y_train, X_val, y_val, device,
-                 optimizer_name=None, lr=None, hidden_size=None,
-                 num_layers=None, dropout=None, batch_size=None, seed=None):
+def train_lstm_a(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    device,
+    optimizer_name=None,
+    lr=None,
+    hidden_size=None,
+    num_layers=None,
+    dropout=None,
+    batch_size=None,
+    seed=None,
+    fold_idx: int | None = None,
+):
     """
     Trains LSTM-A using specified or default hyperparameters.
     Returns trained model with best validation loss weights restored.
@@ -742,7 +1080,8 @@ def train_lstm_a(X_train, y_train, X_val, y_val, device,
         return _train_lstm_impl(
             model, X_train, y_train, X_val, y_val, device,
             optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-            config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed
+            config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed,
+            lr_scheduler=None, fold_idx=fold_idx,
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
@@ -762,86 +1101,57 @@ def train_lstm_a(X_train, y_train, X_val, y_val, device,
             return _train_lstm_impl(
                 model, X_train, y_train, X_val, y_val, cpu_device,
                 optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-                config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed
+                config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed,
+                lr_scheduler=None, fold_idx=fold_idx,
             )
         raise
 
 
-def _train_lstm_b_impl(model, X_train, y_train, X_val, y_val, device,
-                        optimizer, scheduler, criterion, max_epochs, patience,
-                        seed=None):
-    """
-    Internal training loop for LSTM-B with batched validation and scheduler.
-    """
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train),
-        torch.LongTensor(y_train)
+def _train_lstm_b_impl(
+    model,
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    device,
+    optimizer,
+    scheduler,
+    criterion,
+    max_epochs,
+    patience,
+    seed=None,
+    fold_idx: int | None = None,
+):
+    """Delegates to _train_lstm_impl with ReduceLROnPlateau."""
+    return _train_lstm_impl(
+        model,
+        X_train,
+        y_train,
+        X_val,
+        y_val,
+        device,
+        optimizer,
+        criterion,
+        max_epochs,
+        patience,
+        "LSTM-B",
+        batch_size=config.LSTM_B_BATCH,
+        seed=seed,
+        lr_scheduler=scheduler,
+        fold_idx=fold_idx,
     )
-    val_dataset = TensorDataset(
-        torch.FloatTensor(X_val),
-        torch.LongTensor(y_val)
-    )
-
-    batch_size = config.LSTM_B_BATCH
-    if seed is None:
-        seed = config.RANDOM_SEED
-    train_gen = _make_torch_generator(seed)
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        generator=train_gen,
-    )
-    val_loader = DataLoader(val_dataset, batch_size=batch_size * 2, shuffle=False)
-
-    best_val_loss = float('inf')
-    best_state = None
-    patience_ctr = 0
-
-    with tqdm(range(max_epochs), desc="LSTM-B", unit="epoch") as pbar:
-        for epoch in pbar:
-            model.train()
-            for xb, yb in train_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                optimizer.zero_grad()
-                loss = criterion(model(xb), yb)
-                loss.backward()
-                optimizer.step()
-
-            # Batched validation
-            model.eval()
-            val_loss_sum = 0.0
-            val_count = 0
-            with torch.no_grad():
-                for xb, yb in val_loader:
-                    xb, yb = xb.to(device), yb.to(device)
-                    loss = criterion(model(xb), yb)
-                    val_loss_sum += loss.item() * len(yb)
-                    val_count += len(yb)
-            val_loss = val_loss_sum / val_count
-
-            scheduler.step(val_loss)
-
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                patience_ctr = 0
-            else:
-                patience_ctr += 1
-                if patience_ctr >= patience:
-                    pbar.set_postfix({"val_loss": f"{best_val_loss:.4f}", "status": "early stop"})
-                    break
-
-            pbar.set_postfix({"val_loss": f"{val_loss:.4f}", "best": f"{best_val_loss:.4f}"})
-
-    model.load_state_dict(best_state)
-    model.to(device)
-    print(f"  [LSTM-B] epoch {epoch+1}/{max_epochs} — early stop | val_loss={best_val_loss:.4f}")
-    return model
 
 
-def train_lstm_b(X_train, y_train, X_val, y_val, device, seed=None):
+def train_lstm_b(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    device,
+    seed=None,
+    fold_idx: int | None = None,
+    learning_rate: float | None = None,
+):
     """
     Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
     Returns trained model with best validation loss weights restored.
@@ -850,12 +1160,13 @@ def train_lstm_b(X_train, y_train, X_val, y_val, device, seed=None):
     _clear_mps_cache()
     train_seed = config.RANDOM_SEED if seed is None else seed
     _seed_everything(train_seed)
+    lr_use = float(learning_rate) if learning_rate is not None else config.LSTM_B_LR
 
     def _create_model_and_optim(dev):
         model = LSTMModelB().to(dev)
         optimizer = torch.optim.Adam(
             model.parameters(),
-            lr=config.LSTM_B_LR,
+            lr=lr_use,
             weight_decay=config.LSTM_WD,
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -874,6 +1185,7 @@ def train_lstm_b(X_train, y_train, X_val, y_val, device, seed=None):
             optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
             config.LSTM_B_PATIENCE,
             seed=train_seed,
+            fold_idx=fold_idx,
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
@@ -886,6 +1198,7 @@ def train_lstm_b(X_train, y_train, X_val, y_val, device, seed=None):
                 optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
                 config.LSTM_B_PATIENCE,
                 seed=train_seed,
+                fold_idx=fold_idx,
             )
         raise
 

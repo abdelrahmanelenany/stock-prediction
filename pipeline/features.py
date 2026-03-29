@@ -119,6 +119,70 @@ def denoise_close_price(close_series: pd.Series, wavelet: str = "haar",
     return pd.Series(denoised, index=close_series.index, name=close_series.name)
 
 
+def denoise_close_price_causal(close_series: pd.Series, threshold: float,
+                                window_size: int = 128,
+                                wavelet: str = "haar",
+                                level: int = 1,
+                                mode: str = "soft") -> pd.Series:
+    """
+    CAUSAL wavelet denoising: each value at time t uses only a fixed lookback window.
+
+    This prevents look-ahead bias by ensuring the denoised value at time t
+    depends only on prices from times [t - window_size, t], not future data.
+
+    Parameters
+    ----------
+    close_series : pd.Series
+        Raw daily close prices (chronological order).
+    threshold : float
+        Pre-computed threshold from training data (required).
+    window_size : int
+        Number of historical points to use for each denoising operation.
+        Must be >= 4 for wavelet decomposition.
+    wavelet : str
+        Wavelet family ('haar' is the paper's choice).
+    level : int
+        Decomposition level.
+    mode : str
+        Thresholding mode: 'soft' (paper) or 'hard'.
+
+    Returns
+    -------
+    pd.Series
+        Causally denoised close prices (same index as input).
+    """
+    try:
+        import pywt
+    except ImportError:
+        print("Warning: PyWavelets not installed. Returning raw prices.")
+        return close_series
+
+    prices = close_series.values.astype(float)
+    denoised = np.full(len(prices), np.nan)
+
+    # For each time point >= window_size, apply wavelet denoising to lookback window
+    for t in range(window_size, len(prices)):
+        # Fixed lookback window ending at t (inclusive)
+        window = prices[t - window_size:t + 1]
+
+        # Wavelet decomposition
+        coeffs = pywt.wavedec(window, wavelet=wavelet, level=level)
+
+        # Apply thresholding to detail coefficients
+        coeffs_thresh = [coeffs[0]]  # Keep approximation unchanged
+        for detail in coeffs[1:]:
+            coeffs_thresh.append(pywt.threshold(detail, threshold, mode=mode))
+
+        # Reconstruct and take only the LAST value (current time t)
+        reconstructed = pywt.waverec(coeffs_thresh, wavelet=wavelet)
+        denoised[t] = reconstructed[-1]
+
+    # For early points (warm-up period), use raw prices
+    denoised[:window_size] = prices[:window_size]
+
+    return pd.Series(denoised, index=close_series.index, name=close_series.name)
+
+
 def compute_wavelet_thresholds(df_train: pd.DataFrame) -> dict:
     """
     Compute wavelet denoising thresholds from training data only.
@@ -188,11 +252,69 @@ def apply_wavelet_denoising(df: pd.DataFrame,
     return pd.concat(denoised_rows).sort_values(["Date", "Ticker"])
 
 
+def apply_wavelet_denoising_causal(df: pd.DataFrame,
+                                    thresholds: dict,
+                                    window_size: int = None) -> pd.DataFrame:
+    """
+    Apply CAUSAL wavelet denoising to each ticker independently.
+
+    CRITICAL FIX: This function uses rolling-window denoising to prevent
+    look-ahead bias. Each denoised value at time t only uses historical data
+    from [t - window_size, t].
+
+    Unlike apply_wavelet_denoising(), this function:
+    1. REQUIRES pre-computed thresholds (no auto-computation)
+    2. Uses denoise_close_price_causal() instead of denoise_close_price()
+    3. Applies denoising per-split independently (no concatenation)
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Data with columns [Date, Ticker, Close, ...].
+    thresholds : dict
+        {ticker: threshold} pre-computed from training data (REQUIRED).
+    window_size : int, optional
+        Lookback window size. Defaults to config.WAVELET_WINDOW_SIZE.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of df with 'Close' column replaced by causally denoised values.
+    """
+    if window_size is None:
+        window_size = getattr(config, 'WAVELET_WINDOW_SIZE', 128)
+
+    df = df.copy()
+    denoised_rows = []
+
+    for ticker, grp in df.groupby("Ticker"):
+        grp = grp.sort_values("Date").copy()
+
+        # Get pre-computed threshold (required for causal denoising)
+        thresh = thresholds.get(ticker)
+        if thresh is None:
+            # Ticker not in training set - use raw prices
+            denoised_rows.append(grp)
+            continue
+
+        grp["Close"] = denoise_close_price_causal(
+            grp["Close"],
+            threshold=thresh,
+            window_size=window_size,
+            wavelet=config.WAVELET_TYPE,
+            level=config.WAVELET_LEVEL,
+            mode=config.WAVELET_MODE,
+        )
+        denoised_rows.append(grp)
+
+    return pd.concat(denoised_rows).sort_values(["Date", "Ticker"])
+
+
 def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Compute only the 8 features actively used across all models.
-    All other previously computed features (lagged returns, MACD_Signal,
-    BB_Width, OBV, HL_Pct, Mom_10d) are intentionally omitted.
+    Compute the 10 features actively used across all models.
+    Includes multi-day momentum features (Return_5d, Return_21d) for
+    improved predictive power.
 
     ANTI-LEAKAGE: All indicators are causal — each value at time t
     uses only data from t and earlier.
@@ -201,6 +323,10 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ── Return_1d ─────────────────────────────────────────────────────
     df["Return_1d"] = df["Close"].pct_change(1)
+
+    # ── Multi-day Momentum (Fischer & Krauss 2017 style) ───────────────
+    df["Return_5d"] = df["Close"].pct_change(5)    # Weekly momentum
+    df["Return_21d"] = df["Close"].pct_change(21)  # Monthly momentum
 
     # ── RSI_14 (Bhandari §4.3) ────────────────────────────────────────
     delta = df["Close"].diff()
@@ -292,6 +418,102 @@ def compute_sector_rel_return(df: pd.DataFrame, sector_map: dict) -> pd.DataFram
     return df
 
 
+def compute_market_context_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Market-wide features: cross-sectional mean returns (same day, PIT at t),
+    rolling market vol on the market return series, excess returns vs market,
+    rolling CAPM-style beta vs market (past window only per ticker).
+    """
+    df = df.copy()
+    vol_windows = getattr(config, 'MARKET_VOL_WINDOWS', (20, 60))
+
+    agg_cols = ['Return_1d', 'Return_5d']
+    if 'Return_21d' in df.columns:
+        agg_cols.append('Return_21d')
+
+    market_daily = df.groupby('Date')[agg_cols].mean().reset_index()
+    rename = {'Return_1d': 'Market_Return_1d', 'Return_5d': 'Market_Return_5d'}
+    if 'Return_21d' in agg_cols:
+        rename['Return_21d'] = 'Market_Return_21d'
+    market_daily.rename(columns=rename, inplace=True)
+    market_daily = market_daily.sort_values('Date')
+
+    for w in vol_windows:
+        col = f'Market_Vol_{w}d'
+        market_daily[col] = (
+            market_daily['Market_Return_1d'].rolling(int(w)).std() * np.sqrt(252)
+        )
+
+    df = df.merge(market_daily, on='Date', how='left')
+
+    df['RelToMarket_1d'] = df['Return_1d'] - df['Market_Return_1d']
+    df['RelToMarket_5d'] = df['Return_5d'] - df['Market_Return_5d']
+    if 'Market_Return_21d' in df.columns and 'Return_21d' in df.columns:
+        df['RelToMarket_21d'] = df['Return_21d'] - df['Market_Return_21d']
+
+    beta_w = int(getattr(config, 'BETA_WINDOW', 60))
+    beta_col = f'Beta_{beta_w}d'
+    beta_parts = []
+    for _, g in df.groupby('Ticker'):
+        g = g.sort_values('Date').copy()
+        rm = g['Market_Return_1d']
+        rs = g['Return_1d']
+        c = rs.rolling(beta_w).cov(rm)
+        v = rm.rolling(beta_w).var() + 1e-12
+        g[beta_col] = c / v
+        beta_parts.append(g)
+    df = pd.concat(beta_parts).sort_values(['Date', 'Ticker'])
+    return df
+
+
+def compute_sector_context_features(df: pd.DataFrame, sector_map: dict) -> pd.DataFrame:
+    """
+    Leave-one-out sector mean returns, rolling sector vol on sector mean return,
+    within (Date, Sector) z-score of returns (same-day peers only).
+    """
+    df = df.copy()
+    if 'Sector' not in df.columns:
+        df['Sector'] = df['Ticker'].map(sector_map).fillna('Unknown')
+
+    def leave_one_out_mean(col_name: str, new_col_name: str) -> None:
+        sector_means = df.groupby(['Date', 'Sector'])[col_name].transform('mean')
+        sector_counts = df.groupby(['Date', 'Sector'])[col_name].transform('count')
+        sector_sums = sector_means * sector_counts
+        df[new_col_name] = np.where(
+            sector_counts > 1,
+            (sector_sums - df[col_name]) / (sector_counts - 1),
+            0.0,
+        )
+
+    leave_one_out_mean('Return_1d', 'Sector_Return_1d')
+    leave_one_out_mean('Return_5d', 'Sector_Return_5d')
+    if 'Return_21d' in df.columns:
+        leave_one_out_mean('Return_21d', 'Sector_Return_21d')
+
+    extra_vol_w = getattr(config, 'SECTOR_VOL_EXTRA_WINDOWS', (60,))
+    sector_daily = df.groupby(['Date', 'Sector'])['Return_1d'].mean().reset_index()
+    sector_daily = sector_daily.sort_values('Date')
+    sector_daily['Sector_Vol_20d'] = sector_daily.groupby('Sector')['Return_1d'].transform(
+        lambda x: x.rolling(20).std() * np.sqrt(252)
+    )
+    for w in extra_vol_w:
+        if int(w) == 20:
+            continue
+        sector_daily[f'Sector_Vol_{int(w)}d'] = sector_daily.groupby('Sector')['Return_1d'].transform(
+            lambda x, ww=int(w): x.rolling(ww).std() * np.sqrt(252)
+        )
+
+    merge_cols = ['Date', 'Sector'] + [c for c in sector_daily.columns if c.startswith('Sector_Vol')]
+    df = df.merge(sector_daily[merge_cols], on=['Date', 'Sector'], how='left')
+
+    df['SectorRelZ_Return_1d'] = df.groupby(['Date', 'Sector'])['Return_1d'].transform(
+        lambda x: (x - x.mean()) / (x.std() + 1e-12)
+    )
+
+    df.drop(columns=['Sector'], inplace=True)
+    return df
+
+
 def recompute_features_from_denoised(df: pd.DataFrame) -> pd.DataFrame:
     """
     Recompute all Close-dependent features from denoised Close prices.
@@ -361,6 +583,12 @@ def recompute_features_from_denoised(df: pd.DataFrame) -> pd.DataFrame:
     # Recompute SectorRelReturn (depends on Return_1d)
     result = compute_sector_rel_return(result, sector_map=config.SECTOR_MAP)
     
+    if getattr(config, 'MARKET_FEATURES_ENABLED', False):
+        result = compute_market_context_features(result)
+        
+    if getattr(config, 'SECTOR_FEATURES_ENABLED', False):
+        result = compute_sector_context_features(result, sector_map=config.SECTOR_MAP)
+        
     return result
 
 
@@ -386,9 +614,15 @@ def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
         enriched.append(compute_technical_features(group))
     result = pd.concat(enriched).sort_values(['Date', 'Ticker']).reset_index(drop=True)
 
-    # Step 2 — Compute SectorRelReturn
-    print("Computing SectorRelReturn...")
+    # Step 2 — Compute SectorRelReturn and context features
+    print("Computing SectorRelReturn and Context Features...")
     result = compute_sector_rel_return(result, sector_map=config.SECTOR_MAP)
+    
+    if getattr(config, 'MARKET_FEATURES_ENABLED', False):
+        result = compute_market_context_features(result)
+        
+    if getattr(config, 'SECTOR_FEATURES_ENABLED', False):
+        result = compute_sector_context_features(result, sector_map=config.SECTOR_MAP)
 
     # Step 3 — Drop NaN rows
     before = len(result)

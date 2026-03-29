@@ -77,13 +77,66 @@ TRAIN_DAYS = 500   # ~2 years
 VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
 TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
 
-# ── Feature config (reduced to 8 active features per Section 6) ────────────────
+# Walk-forward: stride between folds (None = roll by one test window)
+WALK_FORWARD_STRIDE = None  # resolved to TEST_DAYS when None
+# "rolling" = fixed-length train window slides; "expanding" = train always from index 0 to val start
+TRAIN_WINDOW_MODE = "rolling"
+
+# Train-window experiment grid (~2y / 3y / 5y trading days at 252 d/y)
+TRAIN_DAYS_CANDIDATES = [504, 756, 1260]
+
+# Optional train-only quantile clipping applied before scaler (fit quantiles on train rows)
+WINSORIZE_ENABLED = False
+WINSORIZE_LOWER_Q = 0.005
+WINSORIZE_UPPER_Q = 0.995
+
+# Fold-level JSON/CSV artifacts under reports/fold_reports/
+SAVE_FOLD_REPORTS = True
+
+# Extra execution cost (same half-turn structure as TC_BPS); 0 = off
+SLIPPAGE_BPS = 0.0
+
+# Signal EMA: use alpha (SIGNAL_SMOOTH_ALPHA) or pandas span
+SIGNAL_EMA_METHOD = "alpha"  # "alpha" | "span"
+SIGNAL_EMA_SPAN = None  # if set and METHOD=span, e.g. 10
+
+# Run raw ranking vs full post-process pipeline; writes reports/signal_ablation_summary.csv
+RUN_SIGNAL_ABLATION = False
+
+# LSTM training audit / diagnostics
+LSTM_LOG_EVERY_EPOCH = True
+LSTM_SAVE_TRAINING_CSV = True
+LSTM_AUDIT_GRAD_NORM = False
+LSTM_MAX_GRAD_NORM = None  # if float, clip gradients to this norm
+LSTM_FLAT_AUC_WARN_epochs = 8
+LSTM_FLAT_AUC_EPS = 0.02
+LSTM_OVERFIT_LOSS_RATIO = 3.0
+LSTM_OVERFIT_WARN_epochs = 6
+
+# Optional LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
+LSTM_LR_GRID = [0.001]
+LSTM_LR_SWEEP_MAX_EPOCHS = 40  # capped budget for experiments/lstm_lr_sweep.py
+
+# Market/sector feature horizons (used in pipeline/features.py)
+MARKET_RETURN_HORIZONS = (1, 5, 21)
+MARKET_VOL_WINDOWS = (20, 60)
+BETA_WINDOW = 60
+SECTOR_RETURN_EXTRA_HORIZONS = (21,)
+SECTOR_VOL_EXTRA_WINDOWS = (60,)
+SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
+
+# ── Feature config (10 active features including momentum + Context features) ────────────────
 SEQ_LEN               = 60
 
-# Master feature union: only features used by at least one model (Section 6)
-# Lagged returns removed — no longer used by any model
+# Context features flags
+MARKET_FEATURES_ENABLED = True
+SECTOR_FEATURES_ENABLED = True
+
+# Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
     "Return_1d",        # LSTM-A, LSTM-B, Baselines
+    "Return_5d",        # LSTM-B, Baselines (weekly momentum)
+    "Return_21d",       # LSTM-B, Baselines (monthly momentum)
     "RSI_14",           # LSTM-A, LSTM-B, Baselines
     "MACD",             # LSTM-A only
     "ATR_14",           # LSTM-A only
@@ -92,7 +145,31 @@ ALL_FEATURE_COLS = [
     "Volume_Ratio",     # LSTM-B, Baselines
     "SectorRelReturn",  # LSTM-B, Baselines
 ]
-N_TOTAL_FEATURES = len(ALL_FEATURE_COLS)  # 8
+
+if MARKET_FEATURES_ENABLED:
+    ALL_FEATURE_COLS.extend([
+        "Market_Return_1d",
+        "Market_Return_5d",
+        "Market_Return_21d",
+        "Market_Vol_20d",
+        "Market_Vol_60d",
+        "RelToMarket_1d",
+        "RelToMarket_5d",
+        "RelToMarket_21d",
+        f"Beta_{BETA_WINDOW}d",
+    ])
+
+if SECTOR_FEATURES_ENABLED:
+    ALL_FEATURE_COLS.extend([
+        "Sector_Return_1d",
+        "Sector_Return_5d",
+        "Sector_Return_21d",
+        "Sector_Vol_20d",
+        "Sector_Vol_60d",
+        "SectorRelZ_Return_1d",
+    ])
+
+N_TOTAL_FEATURES = len(ALL_FEATURE_COLS)  # Dynamically computed
 
 # ── Per-model feature sets (Section 7.1) ────────────────────────────────────
 LSTM_A_FEATURE_COLS = [
@@ -100,16 +177,43 @@ LSTM_A_FEATURE_COLS = [
     "RSI_14",      # 14-day RSI (Bhandari §4.3)
     "ATR_14",      # 14-day ATR (Bhandari §4.3)
     "Return_1d",   # 1-day simple return
+    "Return_5d",   # 5-day simple return (weekly momentum)
+    "Return_21d",  # 21-day simple return (monthly momentum)
 ]
 
 LSTM_B_FEATURE_COLS = [
     "Return_1d",
+    "Return_5d",        # Weekly momentum
+    "Return_21d",       # Monthly momentum
     "RSI_14",
     "BB_PctB",
     "RealVol_20d",
     "Volume_Ratio",
     "SectorRelReturn",
 ]
+
+if MARKET_FEATURES_ENABLED:
+    LSTM_B_FEATURE_COLS.extend([
+        "Market_Return_1d",
+        "Market_Return_5d",
+        "Market_Return_21d",
+        "Market_Vol_20d",
+        "Market_Vol_60d",
+        "RelToMarket_1d",
+        "RelToMarket_5d",
+        "RelToMarket_21d",
+        f"Beta_{BETA_WINDOW}d",
+    ])
+
+if SECTOR_FEATURES_ENABLED:
+    LSTM_B_FEATURE_COLS.extend([
+        "Sector_Return_1d",
+        "Sector_Return_5d",
+        "Sector_Return_21d",
+        "Sector_Vol_20d",
+        "Sector_Vol_60d",
+        "SectorRelZ_Return_1d",
+    ])
 
 # Baselines use LSTM-B features for fair comparison
 BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
@@ -118,8 +222,12 @@ BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 K_STOCKS = 10  # Number of long / short positions per day (top/bottom 10% of 105 stocks)
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
 SIGNAL_SMOOTH_ALPHA = 0.3  # EMA smoothing factor for probabilities (lower = stickier)
-SIGNAL_CONFIDENCE_THRESHOLD = 0.0  # Pure ranking (was 0.03 — caused signal imbalance with biased probs)
+SIGNAL_CONFIDENCE_THRESHOLD = 0.05  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
+MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
+
+# Execution semantics (see backtest/portfolio.py): features at date t use data through t;
+# signals rank at t; portfolio earns Return_NextDay (close t to close t+1).
 
 # ── LSTM-A: Bhandari-inspired technical indicator LSTM (4 features) ─────────
 # Architecture is determined by hyperparameter tuning (Section 1 / 7.4)
@@ -172,10 +280,11 @@ LSTM_TUNE_PATIENCE   = 5      # early stopping patience during tuning (paper §3
 LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
 
 # ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
-USE_WAVELET_DENOISING = True    # Set False to use raw prices (ablation study)
+USE_WAVELET_DENOISING = False    # Set False to use raw prices (Fixes OOS domain shift)
 WAVELET_TYPE          = "haar"  # Paper uses Haar wavelets
 WAVELET_LEVEL         = 1       # Decomposition level; 1 is appropriate for daily data
 WAVELET_MODE          = "soft"  # Thresholding mode: 'soft' (paper) or 'hard'
+WAVELET_WINDOW_SIZE   = 128     # Lookback window for causal denoising (prevents leakage)
 
 # ── Normalization (Bhandari §4.5 uses MinMax; our default is Standard) ───────
 SCALER_TYPE = "standard"   # Options: "standard" (default) | "minmax"
@@ -185,7 +294,7 @@ FEATURE_CORR_THRESHOLD = 0.80   # Drop features with |r| > threshold
 
 # After running analysis/feature_correlation.py, paste the output list here:
 # Leave as None to use all ALL_FEATURE_COLS (before selection is run)
-FEATURE_COLS_AFTER_SELECTION = ['Return_1d', 'RSI_14', 'MACD', 'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
+FEATURE_COLS_AFTER_SELECTION = ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'MACD', 'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
 
 # Random Forest — expanded grid for 50-stock cross-section
 RF_PARAM_GRID = {

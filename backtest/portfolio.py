@@ -2,8 +2,15 @@
 backtest/portfolio.py
 Step 8: Daily equal-weighted long-short P&L with transaction costs.
 
+Execution timing (aligned with pipeline/targets):
+  - Row at date t uses features known through close t.
+  - Signals are formed at t from those features.
+  - Return_NextDay is the close-to-close return from t to t+1; the portfolio
+    earns long minus short averages of that return.
+
 Transaction cost model (Fischer & Krauss 2017):
   - tc_bps basis points charged per half-turn
+  - Optional slippage_bps added per half-turn (same structural formula)
   - Each position change affects 1/(2*k) of the total portfolio
     (2 legs × k positions per leg = 2k active positions)
   - Day 1: all positions are new → full turnover cost on all active positions
@@ -21,6 +28,7 @@ def compute_portfolio_returns(
     signals_df: pd.DataFrame,
     tc_bps: float = TC_BPS,
     k: int = K_STOCKS,
+    slippage_bps: float = 0.0,
 ) -> pd.DataFrame:
     """
     Compute daily gross and net portfolio returns for a long-short strategy.
@@ -43,14 +51,17 @@ def compute_portfolio_returns(
         Transaction cost per half-turn in basis points (default 5 bps = 0.0005).
     k : int
         Number of long (and short) positions per day.
+    slippage_bps : float
+        Additional basis points per half-turn (e.g. bid-ask; 0 = disabled).
 
     Returns
     -------
     pd.DataFrame indexed by Date with columns:
         Gross_Return, Net_Return, Long_Return, Short_Return,
-        TC, Turnover (number of position changes that day)
+        TC, Slippage_Cost, Turnover (number of half-turn position changes that day)
     """
     tc = tc_bps / 10_000
+    slip = slippage_bps / 10_000
     daily = []
     prev_signals: dict[str, str] = {}   # ticker → last signal
 
@@ -76,19 +87,22 @@ def compute_portfolio_returns(
                 half_turns += 1
         turnover = half_turns
 
-        # Each position change affects 1/(2*k) of the portfolio
-        tc_cost = turnover * tc / (2 * k)
-        net_ret = gross_ret - tc_cost
+        denom = (2 * k)
+        tc_cost = turnover * tc / denom
+        slip_cost = turnover * slip / denom
+        frict = tc_cost + slip_cost
+        net_ret = gross_ret - frict
         prev_signals = curr
 
         daily.append({
-            'Date':         date,
-            'Gross_Return': gross_ret,
-            'Net_Return':   net_ret,
-            'Long_Return':  long_ret,
-            'Short_Return': short_ret,
-            'TC':           tc_cost,
-            'Turnover':     turnover,
+            'Date':          date,
+            'Gross_Return':  gross_ret,
+            'Net_Return':    net_ret,
+            'Long_Return':   long_ret,
+            'Short_Return':  short_ret,
+            'TC':            tc_cost,
+            'Slippage_Cost': slip_cost,
+            'Turnover':      turnover,
         })
 
     return pd.DataFrame(daily).set_index('Date')

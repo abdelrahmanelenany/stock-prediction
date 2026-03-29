@@ -23,28 +23,44 @@ os.environ['OMP_NUM_THREADS'] = '1'  # Prevent XGBoost/PyTorch dual-OpenMP segfa
 
 import time
 import random
+import logging
 import pandas as pd
 import numpy as np
 import xgboost as xgb
 import torch
 from tqdm import tqdm
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s %(name)s: %(message)s',
+)
+logger = logging.getLogger('pipeline')
+
 from pipeline.data_loader import download_and_save
 from pipeline.features import (
     build_feature_matrix, FEATURE_COLS,
-    compute_wavelet_thresholds, apply_wavelet_denoising, recompute_features_from_denoised,
+    compute_wavelet_thresholds, apply_wavelet_denoising, apply_wavelet_denoising_causal,
+    recompute_features_from_denoised,
 )
 from pipeline.targets import create_targets
 from pipeline.walk_forward import generate_walk_forward_folds, print_fold_summary
-from pipeline.standardizer import standardize_fold
+from pipeline.standardizer import standardize_fold, winsorize_fold
+from pipeline.fold_reporting import save_fold_report
+from evaluation.metrics_utils import binary_auc_safe, classification_sanity_checks, log_split_balance
 from models.baselines import train_logistic, train_random_forest, train_xgboost
 from models.lstm_model import (
     prepare_lstm_a_sequences, prepare_lstm_b_sequences,
+    prepare_lstm_a_sequences_temporal_split, prepare_lstm_b_sequences_temporal_split,
     train_lstm_a, train_lstm_b,
     predict_lstm, align_predictions_to_df,
     tune_lstm_hyperparams,
 )
-from backtest.signals import generate_signals
+from backtest.signals import (
+    generate_signals,
+    smooth_probabilities,
+    apply_holding_period_constraint,
+    compute_turnover_and_holding_stats,
+)
 from backtest.portfolio import compute_portfolio_returns
 from backtest.metrics import (
     compute_metrics, evaluate_classification,
@@ -57,6 +73,13 @@ from config import (
     LSTM_A_VAL_SPLIT, LSTM_B_VAL_SPLIT,
     LSTM_A_FEATURES, LSTM_B_FEATURES,
     BASELINE_FEATURE_COLS,
+    SIGNAL_SMOOTH_ALPHA, MIN_HOLDING_DAYS,
+    SLIPPAGE_BPS,
+    WINSORIZE_ENABLED, WINSORIZE_LOWER_Q, WINSORIZE_UPPER_Q,
+    TRAIN_WINDOW_MODE,
+    RUN_SIGNAL_ABLATION,
+    SAVE_FOLD_REPORTS,
+    SIGNAL_EMA_METHOD, SIGNAL_EMA_SPAN,
 )
 
 TARGET_COL = 'Target'
@@ -202,13 +225,21 @@ def _format_summary(results_dict: dict) -> str:
 # Main pipeline
 # ────────────────────────────────────────────────────────────────────────────
 
-def main(load_cached: bool = True):
+def run_walk_forward_pipeline(
+    load_cached: bool = True,
+    train_days: int | None = None,
+    reports_dir: str = 'reports',
+):
     """
     Parameters
     ----------
     load_cached : bool
         If True (default), load data from data/processed/features.csv instead
         of re-downloading and recomputing. Set False to run from scratch.
+    train_days : int, optional
+        Override config TRAIN_DAYS for walk-forward train window length.
+    reports_dir : str
+        Directory for tables and fold reports.
     """
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
@@ -270,11 +301,19 @@ def main(load_cached: bool = True):
     print(f'  LSTM-B: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
     print(f'  Baselines (LR/RF/XGB): {BASELINE_FEATURE_COLS} ({len(BASELINE_FEATURE_COLS)} features)')
 
-    # ── Step 4: Walk-forward folds ───────────────────────────────────────────
+    # Step 4: Walk-forward folds
     dates = sorted(data['Date'].unique())
-    folds = generate_walk_forward_folds(dates, TRAIN_DAYS, VAL_DAYS, TEST_DAYS)
+    td = train_days if train_days is not None else TRAIN_DAYS
+    wf_stride = getattr(config, 'WALK_FORWARD_STRIDE', None)
+    folds = generate_walk_forward_folds(
+        dates, td, VAL_DAYS, getattr(config, 'TEST_DAYS', TEST_DAYS),
+        stride_days=wf_stride,
+        train_window_mode=TRAIN_WINDOW_MODE,
+    )
     print()
     print_fold_summary(folds)
+
+    ablation_rows: list[dict] = []
 
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
@@ -298,46 +337,47 @@ def main(load_cached: bool = True):
               f'Val: {len(df_v):>5} rows | '
               f'Test: {len(df_ts):>5} rows')
 
-        # ── Per-fold wavelet denoising (ANTI-LEAKAGE FIX) ─────────────────────
+        # ── Per-fold wavelet denoising (CAUSAL - NO LEAKAGE) ─────────────────────
         # 1. Threshold computed from training data only
-        # 2. Denoising applied to each split with training-derived threshold
-        # 3. CRITICAL: Recompute Return_NextDay and Target from denoised Return_1d
-        #    to ensure features, target, and backtest P&L all use the same price series
+        # 2. CAUSAL denoising: each value uses only historical data (rolling window)
+        # 3. Apply to each split INDEPENDENTLY (no concatenation)
+        # 4. CRITICAL: Do NOT recompute Target - it must remain based on raw returns
         if config.USE_WAVELET_DENOISING:
             print('  [Wavelet] Computing thresholds from training data...')
             wavelet_thresholds = compute_wavelet_thresholds(df_tr)
 
-            # Concatenate all splits for causal feature recomputation
-            # This ensures rolling windows span across split boundaries correctly
-            df_all = pd.concat([df_tr, df_v, df_ts]).sort_values(['Ticker', 'Date'])
-            df_all = df_all.drop_duplicates(subset=['Date', 'Ticker']).reset_index(drop=True)
+            # Apply CAUSAL denoising to each split INDEPENDENTLY
+            # This prevents future data from leaking into training
+            print('  [Wavelet] Applying causal denoising per split...')
+            df_tr = apply_wavelet_denoising_causal(df_tr, thresholds=wavelet_thresholds)
+            df_v = apply_wavelet_denoising_causal(df_v, thresholds=wavelet_thresholds)
+            df_ts = apply_wavelet_denoising_causal(df_ts, thresholds=wavelet_thresholds)
 
-            # Apply denoising to full series per ticker (using training thresholds)
-            df_all = apply_wavelet_denoising(df_all, thresholds=wavelet_thresholds)
-
-            # Recompute all Close-dependent features from denoised prices
+            # Recompute Close-dependent FEATURES only (RSI, MACD, BB, etc.)
+            # CRITICAL: Do NOT recompute Return_NextDay or Target - they must
+            # remain based on RAW realized returns for honest evaluation
             print('  [Wavelet] Recomputing features from denoised Close...')
-            df_all = recompute_features_from_denoised(df_all)
 
-            # CRITICAL FIX: Recompute Return_NextDay and Target from denoised Return_1d
-            # This ensures target is based on same price series as features
-            print('  [Wavelet] Recomputing Return_NextDay and Target from denoised Return_1d...')
-            df_all = df_all.sort_values(['Ticker', 'Date']).reset_index(drop=True)
-            df_all['Return_NextDay'] = df_all.groupby('Ticker')['Return_1d'].shift(-1)
+            # Save original targets before feature recomputation
+            tr_target = df_tr['Target'].copy()
+            tr_return_next = df_tr['Return_NextDay'].copy()
+            v_target = df_v['Target'].copy()
+            v_return_next = df_v['Return_NextDay'].copy()
+            ts_target = df_ts['Target'].copy()
+            ts_return_next = df_ts['Return_NextDay'].copy()
 
-            # Recompute cross-sectional median target
-            df_all = df_all.dropna(subset=['Return_NextDay']).reset_index(drop=True)
-            daily_median = df_all.groupby('Date')['Return_NextDay'].transform('median')
-            df_all['Target'] = (df_all['Return_NextDay'] >= daily_median).astype(int)
+            # Recompute features from denoised Close
+            df_tr = recompute_features_from_denoised(df_tr)
+            df_v = recompute_features_from_denoised(df_v)
+            df_ts = recompute_features_from_denoised(df_ts)
 
-            # Re-split back into train/val/test using date ranges
-            train_dates = set(dates[fold['train'][0]:fold['train'][1]])
-            val_dates = set(dates[fold['val'][0]:fold['val'][1]])
-            test_dates = set(dates[fold['test'][0]:fold['test'][1]])
-
-            df_tr = df_all[df_all['Date'].isin(train_dates)].reset_index(drop=True)
-            df_v = df_all[df_all['Date'].isin(val_dates)].reset_index(drop=True)
-            df_ts = df_all[df_all['Date'].isin(test_dates)].reset_index(drop=True)
+            # Restore original targets (based on raw returns, not denoised)
+            df_tr['Target'] = tr_target.values
+            df_tr['Return_NextDay'] = tr_return_next.values
+            df_v['Target'] = v_target.values
+            df_v['Return_NextDay'] = v_return_next.values
+            df_ts['Target'] = ts_target.values
+            df_ts['Return_NextDay'] = ts_return_next.values
 
             # Drop rows with NaN from warm-up period after recomputation
             df_tr = df_tr.dropna(subset=FEATURE_COLS).reset_index(drop=True)
@@ -347,18 +387,26 @@ def main(load_cached: bool = True):
             print(f'  [Wavelet] After denoising: Train={len(df_tr)}, '
                   f'Val={len(df_v)}, Test={len(df_ts)}')
 
-        # ── Scaler B: fit on LSTM-B / baseline features (6 features) ──────
-        # Baselines use the same scaler as LSTM-B for fair comparison
-        X_tr_b_s, X_v_b_s, X_ts_b_s, _ = standardize_fold(
-            df_tr[BASELINE_FEATURE_COLS].values,
-            df_v[BASELINE_FEATURE_COLS].values,
-            df_ts[BASELINE_FEATURE_COLS].values,
-        )
-
         y_tr = df_tr[TARGET_COL].values.astype(int)
         y_v = df_v[TARGET_COL].values.astype(int)
+        y_ts = df_ts[TARGET_COL].values.astype(int)
 
-        # ── Baseline Models ──────────────────────────────────────────────────
+        log_split_balance(y_tr, f'fold{fold["fold"]} train', logger)
+        log_split_balance(y_v, f'fold{fold["fold"]} val', logger)
+        log_split_balance(y_ts, f'fold{fold["fold"]} test', logger)
+
+        Xb_tr = df_tr[BASELINE_FEATURE_COLS].values
+        Xb_v = df_v[BASELINE_FEATURE_COLS].values
+        Xb_ts = df_ts[BASELINE_FEATURE_COLS].values
+        if WINSORIZE_ENABLED:
+            Xb_tr, Xb_v, Xb_ts = winsorize_fold(
+                Xb_tr, Xb_v, Xb_ts,
+                lower_q=WINSORIZE_LOWER_Q, upper_q=WINSORIZE_UPPER_Q,
+            )
+
+        X_tr_b_s, X_v_b_s, X_ts_b_s, _ = standardize_fold(Xb_tr, Xb_v, Xb_ts)
+
+        # Baseline Models
         t0 = time.time()
         print('\n  [LR]      fitting...')
         lr_m = train_logistic(X_tr_b_s, y_tr)
@@ -382,20 +430,19 @@ def main(load_cached: bool = True):
         df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
         df_test_fold = df_ts.copy()
 
-        X_tr_a, y_tr_a, X_te_a, y_te_a, keys_tr_a, keys_te_a = prepare_lstm_a_sequences(
-            df_train_fold, df_test_fold
-        )
+        # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
+        X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
+            prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
 
-        print(f'    LSTM-A sequences: train={len(X_tr_a)}, test={len(X_te_a)}')
+        print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
 
-        # Optional: hyperparameter tuning for LSTM-A
+        # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
         best_hp_a = None
         if ENABLE_LSTM_TUNING:
             print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
-            val_split = int(len(X_tr_a) * (1 - LSTM_A_VAL_SPLIT))
             best_hp_a = tune_lstm_hyperparams(
-                X_tr_a[:val_split], y_tr_a[:val_split],
-                X_tr_a[val_split:], y_tr_a[val_split:],
+                X_tr_a, y_tr_a,
+                X_val_a, y_val_a,
                 input_size=len(LSTM_A_FEATURES),
                 device=device,
                 arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
@@ -408,14 +455,11 @@ def main(load_cached: bool = True):
             })
             print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
 
-        # 80/20 split of training sequences into train/val
-        val_split = int(len(X_tr_a) * (1 - LSTM_A_VAL_SPLIT))
-
-        # Train with tuned or default hyperparameters
+        # Train with tuned or default hyperparameters (using temporal val split)
         if best_hp_a:
             model_a = train_lstm_a(
-                X_tr_a[:val_split], y_tr_a[:val_split],
-                X_tr_a[val_split:], y_tr_a[val_split:],
+                X_tr_a, y_tr_a,
+                X_val_a, y_val_a,
                 device,
                 optimizer_name=best_hp_a['optimizer'],
                 lr=best_hp_a['lr'],
@@ -424,13 +468,15 @@ def main(load_cached: bool = True):
                 dropout=best_hp_a['dropout'],
                 batch_size=best_hp_a['batch_size'],
                 seed=fold_seed_base + 20,
+                fold_idx=fold['fold'],
             )
         else:
             model_a = train_lstm_a(
-                X_tr_a[:val_split], y_tr_a[:val_split],
-                X_tr_a[val_split:], y_tr_a[val_split:],
+                X_tr_a, y_tr_a,
+                X_val_a, y_val_a,
                 device,
                 seed=fold_seed_base + 20,
+                fold_idx=fold['fold'],
             )
         print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
 
@@ -438,7 +484,7 @@ def main(load_cached: bool = True):
         probs_a = predict_lstm(model_a, X_te_a, device)
 
         # Free LSTM-A memory before training LSTM-B
-        del model_a, X_tr_a, y_tr_a, X_te_a, y_te_a
+        del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
@@ -446,18 +492,18 @@ def main(load_cached: bool = True):
         t0 = time.time()
         print('  [LSTM-B]  building sequences & training...')
 
-        X_tr_b, y_tr_b, X_te_b, y_te_b, keys_tr_b, keys_te_b = prepare_lstm_b_sequences(
-            df_train_fold, df_test_fold
-        )
+        # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
+        X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, keys_tr_b, keys_val_b, keys_te_b = \
+            prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_B_VAL_SPLIT)
 
-        print(f'    LSTM-B sequences: train={len(X_tr_b)}, test={len(X_te_b)}')
+        print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
 
-        val_split = int(len(X_tr_b) * (1 - LSTM_B_VAL_SPLIT))
         model_b = train_lstm_b(
-            X_tr_b[:val_split], y_tr_b[:val_split],
-            X_tr_b[val_split:], y_tr_b[val_split:],
+            X_tr_b, y_tr_b,
+            X_val_b, y_val_b,
             device,
             seed=fold_seed_base + 30,
+            fold_idx=fold['fold'],
         )
         print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
 
@@ -465,7 +511,7 @@ def main(load_cached: bool = True):
         probs_b = predict_lstm(model_b, X_te_b, device)
 
         # Free LSTM-B memory for next fold
-        del model_b, X_tr_b, y_tr_b, X_te_b, y_te_b
+        del model_b, X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b
         if torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
@@ -477,6 +523,24 @@ def main(load_cached: bool = True):
         pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts)
         pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts)
         pred['Fold'] = fold['fold']
+
+        classification_sanity_checks(
+            y_ts, pred['Prob_LR'].values, name=f"fold{fold['fold']} test LR",
+        )
+        val_auc_lr = binary_auc_safe(y_v, lr_m.predict_proba(X_v_b_s)[:, 1], log_on_fail=False)
+        test_auc_lr = binary_auc_safe(y_ts, pred['Prob_LR'].values, log_on_fail=False)
+
+        if SAVE_FOLD_REPORTS:
+            fr_extra = {
+                'val_auc_lr': val_auc_lr,
+                'test_auc_lr': test_auc_lr,
+            }
+            path_fr = save_fold_report(
+                fold, df_tr, df_v, df_ts, TARGET_COL,
+                extra=fr_extra,
+                reports_dir=os.path.join(reports_dir, 'fold_reports'),
+            )
+            print(f'  Fold report: {path_fr}')
 
         # Report coverage
         n_lstm_a = pred['Prob_LSTM_A'].notna().sum()
@@ -520,14 +584,59 @@ def main(load_cached: bool = True):
             print(f'  {model_name:<12}  [SKIPPED - no valid predictions]')
             continue
 
-        # Generate signals for this model
-        sig_df = generate_signals(valid_preds, k=K_STOCKS, prob_col=prob_col)
+        smoothed_preds = smooth_probabilities(
+            valid_preds, prob_col,
+            alpha=SIGNAL_SMOOTH_ALPHA,
+            ema_method=SIGNAL_EMA_METHOD,
+            ema_span=SIGNAL_EMA_SPAN,
+        )
+        smoothed_col = f'{prob_col}_Smooth'
+
+        sig_df, sig_diag = generate_signals(
+            smoothed_preds, k=K_STOCKS, prob_col=smoothed_col,
+            return_diagnostics=True,
+        )
+        sig_df = apply_holding_period_constraint(sig_df, min_hold_days=MIN_HOLDING_DAYS)
+        hold_st = compute_turnover_and_holding_stats(sig_df, k=K_STOCKS)
+        print(f'  [{model_name}] turnover~{hold_st["mean_daily_turnover_half_turns"]:.2f}  '
+              f'avg_hold~{hold_st["avg_holding_period_trading_days"]:.1f}  '
+              f'threshold_filtered(L/S)={sig_diag["long_slots_filtered_by_threshold"]}/'
+              f'{sig_diag["short_slots_filtered_by_threshold"]}')
+
         sig_df['Model'] = model_name
         all_signals.append(sig_df)
 
-        # Compute portfolio returns at different TC levels
-        port_gross = compute_portfolio_returns(sig_df, tc_bps=0, k=K_STOCKS)
-        port_net_5 = compute_portfolio_returns(sig_df, tc_bps=5, k=K_STOCKS)
+        port_gross = compute_portfolio_returns(
+            sig_df, tc_bps=0, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+        )
+        port_net_5 = compute_portfolio_returns(
+            sig_df, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+        )
+
+        if RUN_SIGNAL_ABLATION:
+            sig_raw, _ = generate_signals(
+                valid_preds, k=K_STOCKS, prob_col=prob_col,
+                confidence_threshold=0.0, return_diagnostics=True,
+            )
+            sig_raw = apply_holding_period_constraint(sig_raw, min_hold_days=1)
+            port_raw = compute_portfolio_returns(
+                sig_raw, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+            )
+            st_raw = compute_turnover_and_holding_stats(sig_raw, k=K_STOCKS)
+            ablation_rows.append({
+                'Model': model_name,
+                'variant': 'raw_rank_min_hold_1',
+                'Sharpe Net': compute_metrics(port_raw['Net_Return'])['Sharpe Ratio'],
+                'mean_turnover': st_raw['mean_daily_turnover_half_turns'],
+                'avg_hold': st_raw['avg_holding_period_trading_days'],
+            })
+            ablation_rows.append({
+                'Model': model_name,
+                'variant': 'ema_threshold_min_hold',
+                'Sharpe Net': compute_metrics(port_net_5['Net_Return'])['Sharpe Ratio'],
+                'mean_turnover': hold_st['mean_daily_turnover_half_turns'],
+                'avg_hold': hold_st['avg_holding_period_trading_days'],
+            })
 
         port_returns_gross[model_name] = port_gross
         port_returns_net_5[model_name] = port_net_5
@@ -560,15 +669,76 @@ def main(load_cached: bool = True):
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
+    # ── Ensemble Model Evaluation ──────────────────────────────────────────────
+    print('\n  [Ensemble] Computing 5-model ensemble...')
+    ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
+
+    # Check if all ensemble columns exist
+    available_cols = [c for c in ensemble_cols if c in full_preds.columns]
+    if len(available_cols) >= 2:
+        # Compute ensemble probability as mean of available models
+        ensemble_preds = full_preds.dropna(subset=available_cols).copy()
+        ensemble_preds['Prob_ENS'] = ensemble_preds[available_cols].mean(axis=1)
+
+        # Apply smoothing and holding period
+        ensemble_smoothed = smooth_probabilities(
+            ensemble_preds, 'Prob_ENS',
+            alpha=SIGNAL_SMOOTH_ALPHA,
+            ema_method=SIGNAL_EMA_METHOD,
+            ema_span=SIGNAL_EMA_SPAN,
+        )
+        sig_df_ens, _ = generate_signals(
+            ensemble_smoothed, k=K_STOCKS, prob_col='Prob_ENS_Smooth',
+            return_diagnostics=True,
+        )
+        sig_df_ens = apply_holding_period_constraint(sig_df_ens, min_hold_days=MIN_HOLDING_DAYS)
+        sig_df_ens['Model'] = 'Ensemble'
+        all_signals.append(sig_df_ens)
+
+        port_gross_ens = compute_portfolio_returns(
+            sig_df_ens, tc_bps=0, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+        )
+        port_net_5_ens = compute_portfolio_returns(
+            sig_df_ens, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+        )
+
+        port_returns_gross['Ensemble'] = port_gross_ens
+        port_returns_net_5['Ensemble'] = port_net_5_ens
+
+        # Store daily returns
+        daily_returns_gross['Ensemble'] = port_gross_ens['Gross_Return'].values
+        daily_returns_net_5['Ensemble'] = port_net_5_ens['Net_Return'].values
+
+        # Classification metrics for ensemble
+        y_true_ens = ensemble_preds[TARGET_COL].values
+        y_prob_ens = ensemble_preds['Prob_ENS'].values
+        cm_ens = evaluate_classification(y_true_ens, y_prob_ens)
+        daily_auc_ens = compute_daily_auc(ensemble_preds, 'Prob_ENS', TARGET_COL)
+        cm_ens['Daily AUC (mean)'] = daily_auc_ens['Daily AUC (mean)']
+        cm_ens['Daily AUC (std)'] = daily_auc_ens['Daily AUC (std)']
+        cm_ens['Model'] = 'Ensemble'
+        class_metrics.append(cm_ens)
+
+        # Print gross metrics
+        m = compute_metrics(port_gross_ens['Gross_Return'])
+        print(f'  {"Ensemble":<12}  '
+              f'Sharpe={m["Sharpe Ratio"]:>6.3f}  '
+              f'Sortino={m["Sortino Ratio"]:>6.3f}  '
+              f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
+              f'MDD={m["Max Drawdown (%)"]:.2f}%')
+
     # ── Print net results ─────────────────────────────────────────────────────
     print('\n' + '=' * 60)
-    print('RESULTS — NET (5 bps)')
+    print(f'RESULTS — NET ({TC_BPS:g} bps TC + {SLIPPAGE_BPS:g} bps slippage per half-turn)')
     print('=' * 60)
 
     results_gross = []
     results_net_5 = []
 
-    for model_name in model_cols.keys():
+    # Include Ensemble in the list of models to report
+    all_model_names = list(model_cols.keys()) + ['Ensemble']
+
+    for model_name in all_model_names:
         if model_name not in port_returns_gross:
             continue
 
@@ -618,8 +788,13 @@ def main(load_cached: bool = True):
         },
         signals_dict=signals_df,
         tuning_results=tuning_results,
-        reports_dir='reports'
+        reports_dir=reports_dir,
     )
+
+    if ablation_rows:
+        ab_path = os.path.join(reports_dir, 'signal_ablation_summary.csv')
+        pd.DataFrame(ablation_rows).to_csv(ab_path, index=False)
+        print(f'Signal ablation summary: {ab_path}')
 
     print('\n\nPipeline complete.')
     return {
@@ -630,5 +805,10 @@ def main(load_cached: bool = True):
     }
 
 
+def main(load_cached: bool = True):
+    """CLI entry: delegates to run_walk_forward_pipeline with default reports dir."""
+    return run_walk_forward_pipeline(load_cached=load_cached, reports_dir='reports')
+
+
 if __name__ == '__main__':
-    main(load_cached=True)
+    main(load_cached=False)

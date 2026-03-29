@@ -6,13 +6,19 @@ Fold structure (rolls forward by one test period each time):
   |--- Train 500 ---|--- Val 125 ---|--- Test 125 ---|
                     |--- Train 500 ---|--- Val 125 ---|--- Test 125 ---|
                                      ...
+
+Modes:
+  rolling    — fixed train length; window slides by stride_days
+  expanding  — train always dates[0:val_start); val/test blocks slide by stride_days
 """
-import pandas as pd
+from __future__ import annotations
+
 import sys
 import os
+from typing import Literal
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from config import TRAIN_DAYS, VAL_DAYS, TEST_DAYS
+from config import TRAIN_DAYS, VAL_DAYS, TEST_DAYS, WALK_FORWARD_STRIDE, TRAIN_WINDOW_MODE
 
 
 def generate_walk_forward_folds(
@@ -20,58 +26,88 @@ def generate_walk_forward_folds(
     train_days: int = TRAIN_DAYS,
     val_days: int = VAL_DAYS,
     test_days: int = TEST_DAYS,
+    stride_days: int | None = None,
+    train_window_mode: Literal["rolling", "expanding"] | str | None = None,
 ) -> list[dict]:
     """
-    Generates non-overlapping test-period walk-forward folds.
+    Generates walk-forward folds with strict chronological ordering.
 
     Parameters
     ----------
     dates_sorted : list
         Sorted list of unique trading dates (strings or Timestamps).
     train_days, val_days, test_days : int
-        Number of trading days in each split (from config.py).
+        Sizes of each segment (rolling mode) or minimum train span (expanding).
+    stride_days : int, optional
+        Index advance between folds. Default: config WALK_FORWARD_STRIDE or test_days.
+    train_window_mode : str
+        'rolling' (default) or 'expanding'.
 
     Returns
     -------
-    list of dict, each containing:
-        fold               : fold number (1-indexed)
-        train              : (start_idx, end_idx) index slice into dates_sorted
-        val                : (start_idx, end_idx)
-        test               : (start_idx, end_idx)
-        train_start_date   : first date of training window
-        train_end_date     : last  date of training window
-        val_start_date     : first date of validation window
-        val_end_date       : last  date of validation window
-        test_start_date    : first date of test window
-        test_end_date      : last  date of test window
+    list of dict with index slices into dates_sorted and boundary dates.
     """
+    if stride_days is None:
+        stride_days = WALK_FORWARD_STRIDE if WALK_FORWARD_STRIDE is not None else test_days
+    mode = (train_window_mode or TRAIN_WINDOW_MODE or "rolling").lower()
+    if mode not in ("rolling", "expanding"):
+        raise ValueError(f"train_window_mode must be 'rolling' or 'expanding', got {mode!r}")
+
     total = len(dates_sorted)
-    window = train_days + val_days + test_days
-    folds = []
-    start = 0
+    folds: list[dict] = []
 
-    while start + window <= total:
-        train_end = start + train_days
-        val_end   = train_end + val_days
-        test_end  = val_end + test_days
+    if mode == "rolling":
+        window = train_days + val_days + test_days
+        start = 0
+        while start + window <= total:
+            train_end = start + train_days
+            val_end = train_end + val_days
+            test_end = val_end + test_days
 
-        folds.append({
-            'fold':            len(folds) + 1,
-            'train':           (start, train_end),
-            'val':             (train_end, val_end),
-            'test':            (val_end, test_end),
-            'train_start_date': dates_sorted[start],
-            'train_end_date':   dates_sorted[train_end - 1],
-            'val_start_date':   dates_sorted[train_end],
-            'val_end_date':     dates_sorted[val_end - 1],
-            'test_start_date':  dates_sorted[val_end],
-            'test_end_date':    dates_sorted[test_end - 1],
-        })
-        start += test_days   # roll forward by exactly one test period
+            folds.append({
+                'fold': len(folds) + 1,
+                'train': (start, train_end),
+                'val': (train_end, val_end),
+                'test': (val_end, test_end),
+                'train_start_date': dates_sorted[start],
+                'train_end_date': dates_sorted[train_end - 1],
+                'val_start_date': dates_sorted[train_end],
+                'val_end_date': dates_sorted[val_end - 1],
+                'test_start_date': dates_sorted[val_end],
+                'test_end_date': dates_sorted[test_end - 1],
+                'train_window_mode': mode,
+                'stride_days': stride_days,
+            })
+            start += stride_days
+    else:
+        # Expanding train: train indices [0, val_start), val [val_start, val_end), test [...]
+        val_start = train_days
+        while True:
+            val_end = val_start + val_days
+            test_end = val_end + test_days
+            if test_end > total:
+                break
+            folds.append({
+                'fold': len(folds) + 1,
+                'train': (0, val_start),
+                'val': (val_start, val_end),
+                'test': (val_end, test_end),
+                'train_start_date': dates_sorted[0],
+                'train_end_date': dates_sorted[val_start - 1],
+                'val_start_date': dates_sorted[val_start],
+                'val_end_date': dates_sorted[val_end - 1],
+                'test_start_date': dates_sorted[val_end],
+                'test_end_date': dates_sorted[test_end - 1],
+                'train_window_mode': mode,
+                'stride_days': stride_days,
+            })
+            val_start += stride_days
 
-    print(f"Generated {len(folds)} folds "
-          f"(train={train_days}d, val={val_days}d, test={test_days}d, "
-          f"total dates={total})")
+    print(
+        f"Generated {len(folds)} folds mode={mode} stride={stride_days} "
+        f"(train={'expanding from 0' if mode == 'expanding' else train_days}, "
+        f"val={val_days}d, test={test_days}d, total dates={total})"
+    )
     return folds
 
 

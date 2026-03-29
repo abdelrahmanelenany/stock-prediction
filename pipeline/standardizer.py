@@ -75,6 +75,33 @@ def standardize_fold(
     return X_train_s, X_val_s, X_test_s, scaler
 
 
+def winsorize_fold(
+    X_train: np.ndarray,
+    X_val: np.ndarray,
+    X_test: np.ndarray,
+    lower_q: float = 0.005,
+    upper_q: float = 0.995,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Clip features to train-derived quantiles (column-wise), then apply same
+    bounds to val and test. PIT-safe: quantiles use training rows only.
+    """
+    X_train = np.asarray(X_train, dtype=np.float64).copy()
+    X_val = np.asarray(X_val, dtype=np.float64).copy()
+    X_test = np.asarray(X_test, dtype=np.float64).copy()
+    n_feat = X_train.shape[1]
+    for j in range(n_feat):
+        col = X_train[:, j]
+        lo = float(np.quantile(col, lower_q))
+        hi = float(np.quantile(col, upper_q))
+        if lo > hi:
+            lo, hi = hi, lo
+        X_train[:, j] = np.clip(X_train[:, j], lo, hi)
+        X_val[:, j] = np.clip(X_val[:, j], lo, hi)
+        X_test[:, j] = np.clip(X_test[:, j], lo, hi)
+    return X_train, X_val, X_test
+
+
 def standardize_train_val(
     X_train: np.ndarray,
     X_val: np.ndarray,
