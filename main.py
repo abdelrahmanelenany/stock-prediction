@@ -89,8 +89,12 @@ CACHE_FEATURES_PATH = 'data/processed/features.csv'
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
                             # (computationally expensive — ~2-3x slower per fold)
 
+RUN_BASELINES = True        # Set False to skip LR, RF, XGB
+RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
+
 device = (
-    torch.device('mps') if torch.backends.mps.is_available()
+    torch.device('cuda') if torch.cuda.is_available()
+    else torch.device('mps') if torch.backends.mps.is_available()
     else torch.device('cpu')
 )
 print(f'Using device: {device}')
@@ -407,128 +411,143 @@ def run_walk_forward_pipeline(
         X_tr_b_s, X_v_b_s, X_ts_b_s, _ = standardize_fold(Xb_tr, Xb_v, Xb_ts)
 
         # Baseline Models
-        t0 = time.time()
-        print('\n  [LR]      fitting...')
-        lr_m = train_logistic(X_tr_b_s, y_tr)
-        print(f'  [LR]      fit done in {time.time()-t0:.1f}s')
+        if RUN_BASELINES:
+            t0 = time.time()
+            print('\n  [LR]      fitting...')
+            lr_m = train_logistic(X_tr_b_s, y_tr)
+            print(f'  [LR]      fit done in {time.time()-t0:.1f}s')
 
-        t0 = time.time()
-        print('  [RF]      fitting...')
-        rf_m = train_random_forest(X_tr_b_s, y_tr, X_v_b_s, y_v)
-        print(f'  [RF]      fit done in {time.time()-t0:.1f}s')
+            t0 = time.time()
+            print('  [RF]      fitting...')
+            rf_m = train_random_forest(X_tr_b_s, y_tr, X_v_b_s, y_v)
+            print(f'  [RF]      fit done in {time.time()-t0:.1f}s')
 
-        t0 = time.time()
-        print('  [XGBoost] fitting...')
-        xgb_m = train_xgboost(X_tr_b_s, y_tr, X_v_b_s, y_v)
-        print(f'  [XGBoost] fit done in {time.time()-t0:.1f}s')
+            t0 = time.time()
+            print('  [XGBoost] fitting...')
+            xgb_m = train_xgboost(X_tr_b_s, y_tr, X_v_b_s, y_v)
+            print(f'  [XGBoost] fit done in {time.time()-t0:.1f}s')
+        else:
+            print('\n  [Baselines] Skipping LR, RF, XGBoost (RUN_BASELINES=False)')
+            lr_m = rf_m = xgb_m = None
 
         # ── LSTM-A: Bhandari-inspired (4 technical features) ─────────────────
-        t0 = time.time()
-        print('  [LSTM-A]  building sequences & training...')
+        probs_a = None
+        keys_te_a = None
+        probs_b = None
+        keys_te_b = None
+        
+        if RUN_LSTMS:
+            t0 = time.time()
+            print('  [LSTM-A]  building sequences & training...')
 
-        # Combine train and validation for LSTM data preparation
-        df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
-        df_test_fold = df_ts.copy()
+            # Combine train and validation for LSTM data preparation
+            df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
+            df_test_fold = df_ts.copy()
 
-        # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
-        X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
-            prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
+            # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
+            X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
+                prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
 
-        print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
+            print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
 
-        # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
-        best_hp_a = None
-        if ENABLE_LSTM_TUNING:
-            print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
-            best_hp_a = tune_lstm_hyperparams(
-                X_tr_a, y_tr_a,
-                X_val_a, y_val_a,
-                input_size=len(LSTM_A_FEATURES),
-                device=device,
-                arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
-                seed=fold_seed_base + 10,
-            )
-            tuning_results.append({
-                'fold': fold['fold'],
-                'model': 'LSTM-A',
-                **best_hp_a
-            })
-            print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
+            # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
+            best_hp_a = None
+            if ENABLE_LSTM_TUNING:
+                print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
+                best_hp_a = tune_lstm_hyperparams(
+                    X_tr_a, y_tr_a,
+                    X_val_a, y_val_a,
+                    input_size=len(LSTM_A_FEATURES),
+                    device=device,
+                    arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
+                    seed=fold_seed_base + 10,
+                )
+                tuning_results.append({
+                    'fold': fold['fold'],
+                    'model': 'LSTM-A',
+                    **best_hp_a
+                })
+                print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
 
-        # Train with tuned or default hyperparameters (using temporal val split)
-        if best_hp_a:
-            model_a = train_lstm_a(
-                X_tr_a, y_tr_a,
-                X_val_a, y_val_a,
+            # Train with tuned or default hyperparameters (using temporal val split)
+            if best_hp_a:
+                model_a = train_lstm_a(
+                    X_tr_a, y_tr_a,
+                    X_val_a, y_val_a,
+                    device,
+                    optimizer_name=best_hp_a['optimizer'],
+                    lr=best_hp_a['lr'],
+                    hidden_size=best_hp_a['hidden_size'],
+                    num_layers=best_hp_a['num_layers'],
+                    dropout=best_hp_a['dropout'],
+                    batch_size=best_hp_a['batch_size'],
+                    seed=fold_seed_base + 20,
+                    fold_idx=fold['fold'],
+                )
+            else:
+                model_a = train_lstm_a(
+                    X_tr_a, y_tr_a,
+                    X_val_a, y_val_a,
+                    device,
+                    seed=fold_seed_base + 20,
+                    fold_idx=fold['fold'],
+                )
+            print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
+
+            # LSTM-A inference
+            probs_a = predict_lstm(model_a, X_te_a, device)
+
+            # Free LSTM-A memory before training LSTM-B
+            del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+
+            # ── LSTM-B: Extended (6 features, fixed architecture) ────────────────
+            t0 = time.time()
+            print('  [LSTM-B]  building sequences & training...')
+
+            # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
+            X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, keys_tr_b, keys_val_b, keys_te_b = \
+                prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_B_VAL_SPLIT)
+
+            print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
+
+            model_b = train_lstm_b(
+                X_tr_b, y_tr_b,
+                X_val_b, y_val_b,
                 device,
-                optimizer_name=best_hp_a['optimizer'],
-                lr=best_hp_a['lr'],
-                hidden_size=best_hp_a['hidden_size'],
-                num_layers=best_hp_a['num_layers'],
-                dropout=best_hp_a['dropout'],
-                batch_size=best_hp_a['batch_size'],
-                seed=fold_seed_base + 20,
+                seed=fold_seed_base + 30,
                 fold_idx=fold['fold'],
             )
+            print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
+
+            # LSTM-B inference
+            probs_b = predict_lstm(model_b, X_te_b, device)
+
+            # Free LSTM-B memory for next fold
+            del model_b, X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
         else:
-            model_a = train_lstm_a(
-                X_tr_a, y_tr_a,
-                X_val_a, y_val_a,
-                device,
-                seed=fold_seed_base + 20,
-                fold_idx=fold['fold'],
-            )
-        print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
-
-        # LSTM-A inference
-        probs_a = predict_lstm(model_a, X_te_a, device)
-
-        # Free LSTM-A memory before training LSTM-B
-        del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-
-        # ── LSTM-B: Extended (6 features, fixed architecture) ────────────────
-        t0 = time.time()
-        print('  [LSTM-B]  building sequences & training...')
-
-        # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
-        X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, keys_tr_b, keys_val_b, keys_te_b = \
-            prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_B_VAL_SPLIT)
-
-        print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
-
-        model_b = train_lstm_b(
-            X_tr_b, y_tr_b,
-            X_val_b, y_val_b,
-            device,
-            seed=fold_seed_base + 30,
-            fold_idx=fold['fold'],
-        )
-        print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
-
-        # LSTM-B inference
-        probs_b = predict_lstm(model_b, X_te_b, device)
-
-        # Free LSTM-B memory for next fold
-        del model_b, X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
+            print('\n  [LSTMs]     Skipping LSTM-A and LSTM-B (RUN_LSTMS=False)')
 
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
-        pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1]
-        pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1]
-        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s))
-        pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts)
-        pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts)
+        pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
+        pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
+        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s)) if RUN_BASELINES else np.nan
+        pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts) if RUN_LSTMS else np.nan
+        pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts) if RUN_LSTMS else np.nan
         pred['Fold'] = fold['fold']
 
-        classification_sanity_checks(
-            y_ts, pred['Prob_LR'].values, name=f"fold{fold['fold']} test LR",
-        )
-        val_auc_lr = binary_auc_safe(y_v, lr_m.predict_proba(X_v_b_s)[:, 1], log_on_fail=False)
-        test_auc_lr = binary_auc_safe(y_ts, pred['Prob_LR'].values, log_on_fail=False)
+        if RUN_BASELINES:
+            classification_sanity_checks(
+                y_ts, pred['Prob_LR'].values, name=f"fold{fold['fold']} test LR",
+            )
+            val_auc_lr = binary_auc_safe(y_v, lr_m.predict_proba(X_v_b_s)[:, 1], log_on_fail=False)
+            test_auc_lr = binary_auc_safe(y_ts, pred['Prob_LR'].values, log_on_fail=False)
+        else:
+            val_auc_lr = test_auc_lr = float('nan')
 
         if SAVE_FOLD_REPORTS:
             fr_extra = {
@@ -670,15 +689,16 @@ def run_walk_forward_pipeline(
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
     # ── Ensemble Model Evaluation ──────────────────────────────────────────────
-    print('\n  [Ensemble] Computing 5-model ensemble...')
+    print('\n  [Ensemble] Computing ensemble...')
     ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
 
-    # Check if all ensemble columns exist
-    available_cols = [c for c in ensemble_cols if c in full_preds.columns]
-    if len(available_cols) >= 2:
+    # Sub-select only columns that actually have valid predictions
+    actual_ensemble_cols = [c for c in ensemble_cols if c in full_preds.columns and full_preds[c].notna().any()]
+    
+    if len(actual_ensemble_cols) >= 2:
         # Compute ensemble probability as mean of available models
-        ensemble_preds = full_preds.dropna(subset=available_cols).copy()
-        ensemble_preds['Prob_ENS'] = ensemble_preds[available_cols].mean(axis=1)
+        ensemble_preds = full_preds.dropna(subset=actual_ensemble_cols).copy()
+        ensemble_preds['Prob_ENS'] = ensemble_preds[actual_ensemble_cols].mean(axis=1)
 
         # Apply smoothing and holding period
         ensemble_smoothed = smooth_probabilities(
@@ -779,6 +799,11 @@ def run_walk_forward_pipeline(
     daily_returns_net_5_df = pd.DataFrame(daily_returns_net_5)
 
     signals_df = pd.concat(all_signals).reset_index(drop=True) if all_signals else pd.DataFrame()
+
+    # Save full predictions so Baseline/LSTM runs can be stitched together later
+    full_preds_path = os.path.join(reports_dir, 'full_predictions.csv')
+    full_preds.to_csv(full_preds_path, index=False)
+    print(f'  Saved raw probabilities to {full_preds_path}')
 
     save_all_results(
         results_dict=results_dict,
