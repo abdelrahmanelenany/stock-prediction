@@ -89,7 +89,7 @@ CACHE_FEATURES_PATH = 'data/processed/features.csv'
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
                             # (computationally expensive — ~2-3x slower per fold)
 
-RUN_BASELINES = True        # Set False to skip LR, RF, XGB
+RUN_BASELINES = False        # Set False to skip LR, RF, XGB
 RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
 
 device = (
