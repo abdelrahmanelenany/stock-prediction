@@ -8,8 +8,8 @@
 ## Project Summary
 
 Build a **walk-forward validated, backtested long-short trading strategy** using ML models
-(Logistic Regression, Random Forest, XGBoost, LSTM-A, LSTM-B, Ensemble) on **105 S&P 500 stocks** across
-10 sectors over **2015–2024**. The pipeline predicts each stock's probability of outperforming
+(Logistic Regression, Random Forest, XGBoost, LSTM-A, LSTM-B, Ensemble) on a **70-stock S&P 500 development universe**
+over **2015–2024**. The pipeline predicts each stock's probability of outperforming
 the cross-sectional median return the next day, ranks stocks by that probability, and constructs
 an equal-weighted long-short portfolio. Features include **10 technical indicators** (including multi-day momentum)
 with **causal wavelet denoising** (Bhandari extension). All performance is reported net of transaction costs.
@@ -97,35 +97,31 @@ print(f"Using device: {device}")  # Should print: mps
 # config.py — Current Implementation
 
 # =============================================================================
-# 1. UNIVERSE: 105 S&P 500 stocks across 10 sectors
+# 1. UNIVERSE: 70-stock S&P 500 development subset
 # =============================================================================
 TICKERS = [
-    # Technology (20)
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'ADBE', 'CRM', 'INTC', 'CSCO',
-    'NFLX', 'ORCL', 'AVGO', 'QCOM', 'TXN', 'AMD', 'IBM', 'NOW', 'INTU', 'AMAT',
-    # Finance (15)
-    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC', 'WFC', 'MS', 'AXP', 'C',
-    'BLK', 'SCHW', 'CME', 'ICE', 'USB',
-    # Healthcare (15)
-    'JNJ', 'UNH', 'ABT', 'MRK', 'PFE', 'LLY', 'ABBV', 'TMO', 'DHR', 'BMY',
-    'AMGN', 'GILD', 'MDT', 'ISRG', 'CVS',
-    # Consumer Discretionary (12)
-    'TSLA', 'HD', 'NKE', 'MCD', 'SBUX', 'TGT', 'LOW', 'TJX', 'BKNG', 'MAR',
-    'ORLY', 'CMG',
-    # Consumer Staples (8)
-    'PG', 'KO', 'PEP', 'COST', 'WMT', 'PM', 'MO', 'CL',
-    # Communication Services (6)
-    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR',
-    # Energy (8)
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO',
-    # Industrials (10)
-    'HON', 'CAT', 'UPS', 'GE', 'RTX', 'BA', 'DE', 'LMT', 'UNP', 'FDX',
-    # Utilities (4)
-    'NEE', 'DUK', 'SO', 'D',
-    # Real Estate (4)
-    'AMT', 'PLD', 'CCI', 'EQIX',
-    # Materials (3)
-    'LIN', 'APD', 'SHW',
+    # Technology (7)
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'ORCL', 'CSCO',
+    # Finance (7)
+    'BRK-B', 'JPM', 'WFC', 'BAC', 'V', 'C', 'MA',
+    # Healthcare (7)
+    'JNJ', 'PFE', 'UNH', 'MRK', 'ABBV', 'AMGN', 'LLY',
+    # Consumer Discretionary (7)
+    'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG',
+    # Consumer Staples (6)
+    'WMT', 'PG', 'KO', 'PEP', 'COST', 'PM',
+    # Communication Services (7)
+    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR', 'FOXA',  # added for 70-stock target
+    # Energy (6)
+    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC',
+    # Industrials (6)
+    'GE', 'UPS', 'HON', 'BA', 'CAT', 'UNP',
+    # Utilities (6)
+    'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC',  # added for 70-stock target
+    # Real Estate (6)
+    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O',  # added for 70-stock target
+    # Materials (5)
+    'LIN', 'APD', 'SHW', 'DD', 'ECL',  # added for 70-stock target
 ]
 
 START_DATE = '2015-01-01'
@@ -146,7 +142,7 @@ SEQ_LEN = 60  # LSTM lookback window (trading days)
 # =============================================================================
 # 4. TRADING
 # =============================================================================
-K_STOCKS = 10  # Number of long / short positions per day
+K_STOCKS = 10  # Number of long / short positions per day from the 70-stock universe
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
 
 # Signal generation parameters
@@ -220,6 +216,7 @@ LSTM_TUNE_PATIENCE   = 5    # Early stopping during tuning
 LSTM_TUNE_MAX_EPOCHS = 50   # Max epochs during tuning
 
 # LSTM-A: Training settings
+LSTM_A_DEV_MODE     = True    # Set False for final thesis run only
 LSTM_A_OPTIMIZER     = 'adam'
 LSTM_A_LR            = 0.001
 LSTM_A_BATCH         = 128
@@ -257,8 +254,8 @@ XGB_REG_LAMBDA   = 1.0   # L2 regularization
 
 # Random Forest grid
 RF_PARAM_GRID = {
-    'n_estimators':     [300, 500],
-    'max_depth':        [5, 10, 15],
+    'n_estimators':     [300],
+    'max_depth':        [5, 10],
     'min_samples_leaf': [30, 50],
 }
 
@@ -295,41 +292,39 @@ FEATURE_COLS_AFTER_SELECTION = [
 # =============================================================================
 SECTOR_MAP = {
     # Technology
-    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech', 'NVDA': 'Tech',
-    'META': 'Tech', 'ADBE': 'Tech', 'CRM': 'Tech', 'INTC': 'Tech', 'CSCO': 'Tech',
-    'NFLX': 'Tech', 'ORCL': 'Tech', 'AVGO': 'Tech', 'QCOM': 'Tech', 'TXN': 'Tech',
-    'AMD': 'Tech', 'IBM': 'Tech', 'NOW': 'Tech', 'INTU': 'Tech', 'AMAT': 'Tech',
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech',
+    'META': 'Tech', 'ORCL': 'Tech', 'CSCO': 'Tech',
     # Finance
-    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance',
-    'BAC': 'Finance', 'WFC': 'Finance', 'MS': 'Finance', 'AXP': 'Finance', 'C': 'Finance',
-    'BLK': 'Finance', 'SCHW': 'Finance', 'CME': 'Finance', 'ICE': 'Finance', 'USB': 'Finance',
+    'BRK-B': 'Finance', 'JPM': 'Finance', 'WFC': 'Finance', 'BAC': 'Finance',
+    'V': 'Finance', 'C': 'Finance', 'MA': 'Finance',
     # Healthcare
-    'JNJ': 'Healthcare', 'UNH': 'Healthcare', 'ABT': 'Healthcare', 'MRK': 'Healthcare',
-    'PFE': 'Healthcare', 'LLY': 'Healthcare', 'ABBV': 'Healthcare', 'TMO': 'Healthcare',
-    'DHR': 'Healthcare', 'BMY': 'Healthcare', 'AMGN': 'Healthcare', 'GILD': 'Healthcare',
-    'MDT': 'Healthcare', 'ISRG': 'Healthcare', 'CVS': 'Healthcare',
+    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'UNH': 'Healthcare',
+    'MRK': 'Healthcare', 'ABBV': 'Healthcare', 'AMGN': 'Healthcare',
+    'LLY': 'Healthcare',
     # Consumer Discretionary
-    'TSLA': 'Consumer', 'HD': 'Consumer', 'NKE': 'Consumer', 'MCD': 'Consumer',
-    'SBUX': 'Consumer', 'TGT': 'Consumer', 'LOW': 'Consumer', 'TJX': 'Consumer',
-    'BKNG': 'Consumer', 'MAR': 'Consumer', 'ORLY': 'Consumer', 'CMG': 'Consumer',
+    'HD': 'Consumer', 'MCD': 'Consumer', 'NKE': 'Consumer', 'SBUX': 'Consumer',
+    'LOW': 'Consumer', 'TJX': 'Consumer', 'BKNG': 'Consumer',
     # Consumer Staples
-    'PG': 'Staples', 'KO': 'Staples', 'PEP': 'Staples', 'COST': 'Staples',
-    'WMT': 'Staples', 'PM': 'Staples', 'MO': 'Staples', 'CL': 'Staples',
+    'WMT': 'Staples', 'PG': 'Staples', 'KO': 'Staples',
+    'PEP': 'Staples', 'COST': 'Staples', 'PM': 'Staples',
     # Communication Services
-    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm', 'T': 'Comm', 'CHTR': 'Comm',
+    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm',
+    'T': 'Comm', 'CHTR': 'Comm', 'FOXA': 'Comm',
     # Energy
-    'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy', 'SLB': 'Energy',
-    'EOG': 'Energy', 'MPC': 'Energy', 'PSX': 'Energy', 'VLO': 'Energy',
+    'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy',
+    'SLB': 'Energy', 'EOG': 'Energy', 'MPC': 'Energy',
     # Industrials
-    'HON': 'Industrial', 'CAT': 'Industrial', 'UPS': 'Industrial', 'GE': 'Industrial',
-    'RTX': 'Industrial', 'BA': 'Industrial', 'DE': 'Industrial', 'LMT': 'Industrial',
-    'UNP': 'Industrial', 'FDX': 'Industrial',
+    'GE': 'Industrial', 'UPS': 'Industrial', 'HON': 'Industrial',
+    'BA': 'Industrial', 'CAT': 'Industrial', 'UNP': 'Industrial',
     # Utilities
-    'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities', 'D': 'Utilities',
+    'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities',
+    'D': 'Utilities', 'AEP': 'Utilities', 'EXC': 'Utilities',
     # Real Estate
-    'AMT': 'REIT', 'PLD': 'REIT', 'CCI': 'REIT', 'EQIX': 'REIT',
+    'AMT': 'REIT', 'PLD': 'REIT', 'CCI': 'REIT',
+    'EQIX': 'REIT', 'SPG': 'REIT', 'O': 'REIT',
     # Materials
     'LIN': 'Materials', 'APD': 'Materials', 'SHW': 'Materials',
+    'DD': 'Materials', 'ECL': 'Materials',
 }
 ```
 
@@ -981,7 +976,7 @@ from backtest.metrics import compute_metrics, evaluate_classification, compute_d
 import torch
 device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
 
-ENABLE_LSTM_TUNING = False  # Set True for Phase 1+2 hyperparameter tuning
+ENABLE_LSTM_TUNING = False  # Only respected when LSTM_A_DEV_MODE = False
 
 def main(load_cached=True):
     """
@@ -1043,7 +1038,17 @@ def main(load_cached=True):
         X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, _, _, keys_te_a = \
             prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold)
 
-        if ENABLE_LSTM_TUNING:
+        if LSTM_A_DEV_MODE:
+            model_a = train_lstm_a(
+                X_tr_a, y_tr_a, X_val_a, y_val_a, device,
+                optimizer_name=LSTM_A_OPTIMIZER,
+                lr=LSTM_A_LR,
+                hidden_size=LSTM_B_HIDDEN_SIZE,
+                num_layers=LSTM_B_NUM_LAYERS,
+                dropout=LSTM_B_DROPOUT,
+                batch_size=LSTM_A_BATCH,
+            )
+        elif ENABLE_LSTM_TUNING:
             best_hp_a = tune_lstm_hyperparams(X_tr_a, y_tr_a, X_val_a, y_val_a, device)
             tuning_results.append({'fold': fold['fold'], 'model': 'LSTM-A', **best_hp_a})
             model_a = train_lstm_a(X_tr_a, y_tr_a, X_val_a, y_val_a, device, **best_hp_a)
@@ -1324,7 +1329,7 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 
 | Parameter | Value | Notes |
 |---|---|---|
-| k (long/short stocks) | 10 | 10 per side out of 105 |
+| k (long/short stocks) | 10 | 10 per side out of 70 |
 | TC (bps) | 5 | Per half-turn |
 | Signal smoothing alpha | 0.3 | EMA for turnover reduction |
 | Z-score normalization | True | Cross-sectional |
@@ -1393,7 +1398,7 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 ## Realistic Expectations
 
 - **Directional accuracy:** 51-54% is a solid result (random = 50%). Do not expect the papers' 53.8%.
-- **Sharpe ratio:** With 105 stocks and k=10, better diversification than originally planned (10 stocks).
+- **Sharpe ratio:** With 70 stocks and k=10, diversification is still materially better than the original 10-stock concept.
   Still expect lower Sharpe than the papers' 5.83 (which used 500 stocks).
 - **LSTM-A vs LSTM-B:** LSTM-A with 6 features may perform differently than LSTM-B with 8 features.
   Both include momentum features for improved predictive power.
@@ -1404,7 +1409,7 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 - **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion
   creates exploitable patterns.
 - **2022 bear market:** Expect elevated drawdown. Analyze separately in sub-period section.
-- **Sector diversification:** The 105-stock universe spans 10 sectors, providing natural
+- **Sector diversification:** The 70-stock development universe still spans the existing sector labels, providing useful
   diversification. The SectorRelReturn feature captures relative performance within sectors.
 
 ---

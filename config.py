@@ -1,81 +1,76 @@
 # config.py — Single source of truth for all hyperparameters and constants
 # Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
-# Expanded to ~100 S&P 500 components for better diversification and more training data
+# Development universe trimmed to 70 large-cap S&P 500 names to reduce runtime.
 TICKERS = [
-    # Technology (20)
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'ADBE', 'CRM', 'INTC', 'CSCO',
-    'NFLX', 'ORCL', 'AVGO', 'QCOM', 'TXN', 'AMD', 'IBM', 'NOW', 'INTU', 'AMAT',
-    # Finance (15)
-    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC', 'WFC', 'MS', 'AXP', 'C',
-    'BLK', 'SCHW', 'CME', 'ICE', 'USB',
-    # Healthcare (15)
-    'JNJ', 'UNH', 'ABT', 'MRK', 'PFE', 'LLY', 'ABBV', 'TMO', 'DHR', 'BMY',
-    'AMGN', 'GILD', 'MDT', 'ISRG', 'CVS',
-    # Consumer Discretionary (12)
-    'TSLA', 'HD', 'NKE', 'MCD', 'SBUX', 'TGT', 'LOW', 'TJX', 'BKNG', 'MAR',
-    'ORLY', 'CMG',
-    # Consumer Staples (8)
-    'PG', 'KO', 'PEP', 'COST', 'WMT', 'PM', 'MO', 'CL',
-    # Communication Services (6)
-    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR',
-    # Energy (8)
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'PSX', 'VLO',
-    # Industrials (10)
-    'HON', 'CAT', 'UPS', 'GE', 'RTX', 'BA', 'DE', 'LMT', 'UNP', 'FDX',
-    # Utilities (4)
-    'NEE', 'DUK', 'SO', 'D',
-    # Real Estate (4)
-    'AMT', 'PLD', 'CCI', 'EQIX',
-    # Materials (3)
-    'LIN', 'APD', 'SHW',
+    # Technology (7)
+    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'ORCL', 'CSCO',
+    # Finance (7)
+    'BRK-B', 'JPM', 'WFC', 'BAC', 'V', 'C', 'MA',
+    # Healthcare (7)
+    'JNJ', 'PFE', 'UNH', 'MRK', 'ABBV', 'AMGN', 'LLY',
+    # Consumer Discretionary (7)
+    'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG',
+    # Consumer Staples (6)
+    'WMT', 'PG', 'KO', 'PEP', 'COST', 'PM',
+    # Communication Services (7)
+    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR', 'FOXA',  # added for 70-stock target
+    # Energy (6)
+    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC',
+    # Industrials (6)
+    'GE', 'UPS', 'HON', 'BA', 'CAT', 'UNP',
+    # Utilities (6)
+    'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC',  # added for 70-stock target
+    # Real Estate (6)
+    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O',  # added for 70-stock target
+    # Materials (5)
+    'LIN', 'APD', 'SHW', 'DD', 'ECL',  # added for 70-stock target
 ]
 
 SECTOR_MAP = {
     # Technology
-    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech', 'NVDA': 'Tech',
-    'META': 'Tech', 'ADBE': 'Tech', 'CRM': 'Tech', 'INTC': 'Tech', 'CSCO': 'Tech',
-    'NFLX': 'Tech', 'ORCL': 'Tech', 'AVGO': 'Tech', 'QCOM': 'Tech', 'TXN': 'Tech',
-    'AMD': 'Tech', 'IBM': 'Tech', 'NOW': 'Tech', 'INTU': 'Tech', 'AMAT': 'Tech',
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech',
+    'META': 'Tech', 'ORCL': 'Tech', 'CSCO': 'Tech',
     # Finance
-    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance',
-    'BAC': 'Finance', 'WFC': 'Finance', 'MS': 'Finance', 'AXP': 'Finance', 'C': 'Finance',
-    'BLK': 'Finance', 'SCHW': 'Finance', 'CME': 'Finance', 'ICE': 'Finance', 'USB': 'Finance',
+    'BRK-B': 'Finance', 'JPM': 'Finance', 'WFC': 'Finance', 'BAC': 'Finance',
+    'V': 'Finance', 'C': 'Finance', 'MA': 'Finance',
     # Healthcare
-    'JNJ': 'Healthcare', 'UNH': 'Healthcare', 'ABT': 'Healthcare', 'MRK': 'Healthcare',
-    'PFE': 'Healthcare', 'LLY': 'Healthcare', 'ABBV': 'Healthcare', 'TMO': 'Healthcare',
-    'DHR': 'Healthcare', 'BMY': 'Healthcare', 'AMGN': 'Healthcare', 'GILD': 'Healthcare',
-    'MDT': 'Healthcare', 'ISRG': 'Healthcare', 'CVS': 'Healthcare',
+    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'UNH': 'Healthcare',
+    'MRK': 'Healthcare', 'ABBV': 'Healthcare', 'AMGN': 'Healthcare',
+    'LLY': 'Healthcare',
     # Consumer Discretionary
-    'TSLA': 'Consumer', 'HD': 'Consumer', 'NKE': 'Consumer', 'MCD': 'Consumer',
-    'SBUX': 'Consumer', 'TGT': 'Consumer', 'LOW': 'Consumer', 'TJX': 'Consumer',
-    'BKNG': 'Consumer', 'MAR': 'Consumer', 'ORLY': 'Consumer', 'CMG': 'Consumer',
+    'HD': 'Consumer', 'MCD': 'Consumer', 'NKE': 'Consumer', 'SBUX': 'Consumer',
+    'LOW': 'Consumer', 'TJX': 'Consumer', 'BKNG': 'Consumer',
     # Consumer Staples
-    'PG': 'Staples', 'KO': 'Staples', 'PEP': 'Staples', 'COST': 'Staples',
-    'WMT': 'Staples', 'PM': 'Staples', 'MO': 'Staples', 'CL': 'Staples',
+    'WMT': 'Staples', 'PG': 'Staples', 'KO': 'Staples', 'PEP': 'Staples',
+    'COST': 'Staples', 'PM': 'Staples',
     # Communication Services
-    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm', 'T': 'Comm', 'CHTR': 'Comm',
+    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm',
+    'T': 'Comm', 'CHTR': 'Comm', 'FOXA': 'Comm',
     # Energy
     'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy', 'SLB': 'Energy',
-    'EOG': 'Energy', 'MPC': 'Energy', 'PSX': 'Energy', 'VLO': 'Energy',
+    'EOG': 'Energy', 'MPC': 'Energy',
     # Industrials
-    'HON': 'Industrial', 'CAT': 'Industrial', 'UPS': 'Industrial', 'GE': 'Industrial',
-    'RTX': 'Industrial', 'BA': 'Industrial', 'DE': 'Industrial', 'LMT': 'Industrial',
-    'UNP': 'Industrial', 'FDX': 'Industrial',
+    'GE': 'Industrial', 'UPS': 'Industrial', 'HON': 'Industrial',
+    'BA': 'Industrial', 'CAT': 'Industrial', 'UNP': 'Industrial',
     # Utilities
     'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities', 'D': 'Utilities',
+    'AEP': 'Utilities', 'EXC': 'Utilities',
     # Real Estate
     'AMT': 'REIT', 'PLD': 'REIT', 'CCI': 'REIT', 'EQIX': 'REIT',
+    'SPG': 'REIT', 'O': 'REIT',
     # Materials
     'LIN': 'Materials', 'APD': 'Materials', 'SHW': 'Materials',
+    'DD': 'Materials', 'ECL': 'Materials',
 }
 
-START_DATE = '2015-01-01'
-END_DATE   = '2024-12-31'
+START_DATE = '1990-01-01'
+END_DATE   = '2015-12-31'
 
 # Walk-forward fold structure
 TRAIN_DAYS = 500   # ~2 years
 VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
 TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
+MAX_FOLDS  = 1     # development cap; set None for full walk-forward run
 
 # Walk-forward: stride between folds (None = roll by one test window)
 WALK_FORWARD_STRIDE = None  # resolved to TEST_DAYS when None
@@ -219,10 +214,10 @@ if SECTOR_FEATURES_ENABLED:
 BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 
 # Trading
-K_STOCKS = 10  # Number of long / short positions per day (top/bottom 10% of 105 stocks)
+K_STOCKS = 10  # Number of long / short positions per day from the 70-stock universe
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
 SIGNAL_SMOOTH_ALPHA = 0.3  # EMA smoothing factor for probabilities (lower = stickier)
-SIGNAL_CONFIDENCE_THRESHOLD = 0.05  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
+SIGNAL_CONFIDENCE_THRESHOLD = 0  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
 
@@ -231,6 +226,7 @@ MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
 
 # ── LSTM-A: Bhandari-inspired technical indicator LSTM (4 features) ─────────
 # Architecture is determined by hyperparameter tuning (Section 1 / 7.4)
+LSTM_A_DEV_MODE     = True                  # Set False for final thesis run only
 LSTM_A_FEATURES      = LSTM_A_FEATURE_COLS  # 4 features: MACD, RSI, ATR, Return_1d
 LSTM_A_SEQ_LEN       = 60                    # matches LSTM-B for fair comparison
 LSTM_A_OPTIMIZER     = 'adam'                # will be tuned
@@ -296,10 +292,10 @@ FEATURE_CORR_THRESHOLD = 0.80   # Drop features with |r| > threshold
 # Leave as None to use all ALL_FEATURE_COLS (before selection is run)
 FEATURE_COLS_AFTER_SELECTION = ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'MACD', 'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
 
-# Random Forest — expanded grid for 50-stock cross-section
+# Random Forest — reduced development grid
 RF_PARAM_GRID = {
-    'n_estimators':     [300, 500],
-    'max_depth':        [5, 10, 15],
+    'n_estimators':     [300],
+    'max_depth':        [5, 10],
     'min_samples_leaf': [30, 50],
 }
 

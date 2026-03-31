@@ -89,7 +89,7 @@ CACHE_FEATURES_PATH = 'data/processed/features.csv'
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
                             # (computationally expensive — ~2-3x slower per fold)
 
-RUN_BASELINES = False        # Set False to skip LR, RF, XGB
+RUN_BASELINES = True        # Set False to skip LR, RF, XGB
 RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
 
 device = (
@@ -245,10 +245,15 @@ def run_walk_forward_pipeline(
     reports_dir : str
         Directory for tables and fold reports.
     """
+    lstm_a_dev_mode = getattr(config, 'LSTM_A_DEV_MODE', False)
+    lstm_a_tuning_enabled = ENABLE_LSTM_TUNING and not lstm_a_dev_mode
+
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
-    print(f"LSTM Tuning: {'ENABLED' if ENABLE_LSTM_TUNING else 'DISABLED'}")
+    print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
+    print(f"LSTM-A Tuning: {'ENABLED' if lstm_a_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
+    print(f"Configured tickers: {len(config.TICKERS)}")
     print("=" * 60)
 
     # Ensure run-to-run reproducibility for all stochastic components.
@@ -314,6 +319,10 @@ def run_walk_forward_pipeline(
         stride_days=wf_stride,
         train_window_mode=TRAIN_WINDOW_MODE,
     )
+    max_folds = getattr(config, 'MAX_FOLDS', None)
+    if max_folds is not None:
+        folds = folds[:max_folds]
+        print(f'Limiting walk-forward run to first {len(folds)} fold(s) (MAX_FOLDS={max_folds}).')
     print()
     print_fold_summary(folds)
 
@@ -452,7 +461,31 @@ def run_walk_forward_pipeline(
 
             # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
             best_hp_a = None
-            if ENABLE_LSTM_TUNING:
+            if lstm_a_dev_mode:
+                print(
+                    '    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; '
+                    'using fixed config defaults.'
+                )
+                print(
+                    f'    [LSTM-A Dev Mode] optimizer={config.LSTM_A_OPTIMIZER} '
+                    f'lr={config.LSTM_A_LR} batch={config.LSTM_A_BATCH} '
+                    f'hidden={config.LSTM_B_HIDDEN_SIZE} layers={config.LSTM_B_NUM_LAYERS} '
+                    f'dropout={config.LSTM_B_DROPOUT}'
+                )
+                model_a = train_lstm_a(
+                    X_tr_a, y_tr_a,
+                    X_val_a, y_val_a,
+                    device,
+                    optimizer_name=config.LSTM_A_OPTIMIZER,
+                    lr=config.LSTM_A_LR,
+                    hidden_size=config.LSTM_B_HIDDEN_SIZE,
+                    num_layers=config.LSTM_B_NUM_LAYERS,
+                    dropout=config.LSTM_B_DROPOUT,
+                    batch_size=config.LSTM_A_BATCH,
+                    seed=fold_seed_base + 20,
+                    fold_idx=fold['fold'],
+                )
+            elif lstm_a_tuning_enabled:
                 print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
                 best_hp_a = tune_lstm_hyperparams(
                     X_tr_a, y_tr_a,
@@ -468,9 +501,6 @@ def run_walk_forward_pipeline(
                     **best_hp_a
                 })
                 print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
-
-            # Train with tuned or default hyperparameters (using temporal val split)
-            if best_hp_a:
                 model_a = train_lstm_a(
                     X_tr_a, y_tr_a,
                     X_val_a, y_val_a,
@@ -485,6 +515,7 @@ def run_walk_forward_pipeline(
                     fold_idx=fold['fold'],
                 )
             else:
+                # Train with default hyperparameters when tuning is disabled.
                 model_a = train_lstm_a(
                     X_tr_a, y_tr_a,
                     X_val_a, y_val_a,
