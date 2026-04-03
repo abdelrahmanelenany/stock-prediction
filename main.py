@@ -80,6 +80,7 @@ from config import (
     RUN_SIGNAL_ABLATION,
     SAVE_FOLD_REPORTS,
     SIGNAL_EMA_METHOD, SIGNAL_EMA_SPAN,
+    DEV_MODE,
 )
 
 TARGET_COL = 'Target'
@@ -446,92 +447,97 @@ def run_walk_forward_pipeline(
         keys_te_b = None
         
         if RUN_LSTMS:
-            t0 = time.time()
-            print('  [LSTM-A]  building sequences & training...')
-
-            # Combine train and validation for LSTM data preparation
+            # Prepare shared data for LSTM models
             df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
             df_test_fold = df_ts.copy()
 
-            # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
-            X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
-                prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
+            # ── LSTM-A: Bhandari-inspired (4 technical features) ─────────────────
+            if not DEV_MODE:
+                t0 = time.time()
+                print('  [LSTM-A]  building sequences & training...')
 
-            print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
+                # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
+                X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
+                    prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
 
-            # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
-            best_hp_a = None
-            if lstm_a_dev_mode:
-                print(
-                    '    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; '
-                    'using fixed config defaults.'
-                )
-                print(
-                    f'    [LSTM-A Dev Mode] optimizer={config.LSTM_A_OPTIMIZER} '
-                    f'lr={config.LSTM_A_LR} batch={config.LSTM_A_BATCH} '
-                    f'hidden={config.LSTM_B_HIDDEN_SIZE} layers={config.LSTM_B_NUM_LAYERS} '
-                    f'dropout={config.LSTM_B_DROPOUT}'
-                )
-                model_a = train_lstm_a(
-                    X_tr_a, y_tr_a,
-                    X_val_a, y_val_a,
-                    device,
-                    optimizer_name=config.LSTM_A_OPTIMIZER,
-                    lr=config.LSTM_A_LR,
-                    hidden_size=config.LSTM_B_HIDDEN_SIZE,
-                    num_layers=config.LSTM_B_NUM_LAYERS,
-                    dropout=config.LSTM_B_DROPOUT,
-                    batch_size=config.LSTM_A_BATCH,
-                    seed=fold_seed_base + 20,
-                    fold_idx=fold['fold'],
-                )
-            elif lstm_a_tuning_enabled:
-                print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
-                best_hp_a = tune_lstm_hyperparams(
-                    X_tr_a, y_tr_a,
-                    X_val_a, y_val_a,
-                    input_size=len(LSTM_A_FEATURES),
-                    device=device,
-                    arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
-                    seed=fold_seed_base + 10,
-                )
-                tuning_results.append({
-                    'fold': fold['fold'],
-                    'model': 'LSTM-A',
-                    **best_hp_a
-                })
-                print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
-                model_a = train_lstm_a(
-                    X_tr_a, y_tr_a,
-                    X_val_a, y_val_a,
-                    device,
-                    optimizer_name=best_hp_a['optimizer'],
-                    lr=best_hp_a['lr'],
-                    hidden_size=best_hp_a['hidden_size'],
-                    num_layers=best_hp_a['num_layers'],
-                    dropout=best_hp_a['dropout'],
-                    batch_size=best_hp_a['batch_size'],
-                    seed=fold_seed_base + 20,
-                    fold_idx=fold['fold'],
-                )
+                print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
+
+                # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
+                best_hp_a = None
+                if lstm_a_dev_mode:
+                    print(
+                        '    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; '
+                        'using fixed config defaults.'
+                    )
+                    print(
+                        f'    [LSTM-A Dev Mode] optimizer={config.LSTM_A_OPTIMIZER} '
+                        f'lr={config.LSTM_A_LR} batch={config.LSTM_A_BATCH} '
+                        f'hidden={config.LSTM_B_HIDDEN_SIZE} layers={config.LSTM_B_NUM_LAYERS} '
+                        f'dropout={config.LSTM_B_DROPOUT}'
+                    )
+                    model_a = train_lstm_a(
+                        X_tr_a, y_tr_a,
+                        X_val_a, y_val_a,
+                        device,
+                        optimizer_name=config.LSTM_A_OPTIMIZER,
+                        lr=config.LSTM_A_LR,
+                        hidden_size=config.LSTM_B_HIDDEN_SIZE,
+                        num_layers=config.LSTM_B_NUM_LAYERS,
+                        dropout=config.LSTM_B_DROPOUT,
+                        batch_size=config.LSTM_A_BATCH,
+                        seed=fold_seed_base + 20,
+                        fold_idx=fold['fold'],
+                    )
+                elif lstm_a_tuning_enabled:
+                    print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
+                    best_hp_a = tune_lstm_hyperparams(
+                        X_tr_a, y_tr_a,
+                        X_val_a, y_val_a,
+                        input_size=len(LSTM_A_FEATURES),
+                        device=device,
+                        arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
+                        seed=fold_seed_base + 10,
+                    )
+                    tuning_results.append({
+                        'fold': fold['fold'],
+                        'model': 'LSTM-A',
+                        **best_hp_a
+                    })
+                    print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
+                    model_a = train_lstm_a(
+                        X_tr_a, y_tr_a,
+                        X_val_a, y_val_a,
+                        device,
+                        optimizer_name=best_hp_a['optimizer'],
+                        lr=best_hp_a['lr'],
+                        hidden_size=best_hp_a['hidden_size'],
+                        num_layers=best_hp_a['num_layers'],
+                        dropout=best_hp_a['dropout'],
+                        batch_size=best_hp_a['batch_size'],
+                        seed=fold_seed_base + 20,
+                        fold_idx=fold['fold'],
+                    )
+                else:
+                    # Train with default hyperparameters when tuning is disabled.
+                    model_a = train_lstm_a(
+                        X_tr_a, y_tr_a,
+                        X_val_a, y_val_a,
+                        device,
+                        seed=fold_seed_base + 20,
+                        fold_idx=fold['fold'],
+                    )
+                print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
+
+                # LSTM-A inference
+                probs_a = predict_lstm(model_a, X_te_a, device)
+
+                # Free LSTM-A memory before training LSTM-B
+                del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
             else:
-                # Train with default hyperparameters when tuning is disabled.
-                model_a = train_lstm_a(
-                    X_tr_a, y_tr_a,
-                    X_val_a, y_val_a,
-                    device,
-                    seed=fold_seed_base + 20,
-                    fold_idx=fold['fold'],
-                )
-            print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
-
-            # LSTM-A inference
-            probs_a = predict_lstm(model_a, X_te_a, device)
-
-            # Free LSTM-A memory before training LSTM-B
-            del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
-            if torch.backends.mps.is_available():
-                torch.mps.empty_cache()
+                print('  [LSTM-A]  skipped (DEV_MODE=True)')
+                probs_a = None
 
             # ── LSTM-B: Extended (6 features, fixed architecture) ────────────────
             t0 = time.time()
@@ -615,9 +621,10 @@ def run_walk_forward_pipeline(
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
-        'LSTM-A': 'Prob_LSTM_A',
         'LSTM-B': 'Prob_LSTM_B',
     }
+    if not DEV_MODE:
+        model_cols['LSTM-A'] = 'Prob_LSTM_A'
 
     port_returns_gross = {}
     port_returns_net_5 = {}
@@ -721,7 +728,11 @@ def run_walk_forward_pipeline(
 
     # ── Ensemble Model Evaluation ──────────────────────────────────────────────
     print('\n  [Ensemble] Computing ensemble...')
-    ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
+    ensemble_cols = (
+        ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_B']
+        if DEV_MODE else
+        ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
+    )
 
     # Sub-select only columns that actually have valid predictions
     actual_ensemble_cols = [c for c in ensemble_cols if c in full_preds.columns and full_preds[c].notna().any()]

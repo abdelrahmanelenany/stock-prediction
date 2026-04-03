@@ -10,3 +10,5 @@ __pycache__/
 data/
 reports/
 reports_exp/
+__pycache__/config.cpython-314.pyc
+backtest/__pycache__/signals.cpython-314.pyc

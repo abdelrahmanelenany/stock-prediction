@@ -1,0 +1,547 @@
+[                       0%                       ][*                      3%                       ]  2 of 70 completed[**                     4%                       ]  3 of 70 completed[***                    6%                       ]  4 of 70 completed[***                    7%                       ]  5 of 70 completed[****                   9%                       ]  6 of 70 completed[*****                 10%                       ]  7 of 70 completed[*****                 11%                       ]  8 of 70 completed[******                13%                       ]  9 of 70 completed[*******               14%                       ]  10 of 70 completed[********              16%                       ]  11 of 70 completed[********              17%                       ]  12 of 70 completed[*********             19%                       ]  13 of 70 completed[**********            20%                       ]  14 of 70 completed[**********            21%                       ]  15 of 70 completed[***********           23%                       ]  16 of 70 completed[************          24%                       ]  17 of 70 completed[************          26%                       ]  18 of 70 completed[*************         27%                       ]  19 of 70 completed[**************        29%                       ]  20 of 70 completed[**************        30%                       ]  21 of 70 completed[***************       31%                       ]  22 of 70 completed[****************      33%                       ]  23 of 70 completed[****************      34%                       ]  24 of 70 completed[*****************     36%                       ]  25 of 70 completed[******************    37%                       ]  26 of 70 completed[*******************   39%                       ]  27 of 70 completed[*******************   40%                       ]  28 of 70 completed[********************  41%                       ]  29 of 70 completed[********************* 43%                       ]  30 of 70 completed[********************* 44%                       ]  31 of 70 completed[**********************46%                       ]  32 of 70 completed[**********************47%                       ]  33 of 70 completed[**********************49%                       ]  34 of 70 completed[**********************50%                       ]  35 of 70 completed[**********************51%                       ]  36 of 70 completed[**********************53%                       ]  37 of 70 completed[**********************54%*                      ]  38 of 70 completed[**********************56%**                     ]  39 of 70 completed[**********************57%**                     ]  40 of 70 completed[**********************59%***                    ]  41 of 70 completed[**********************60%****                   ]  42 of 70 completed[**********************61%****                   ]  43 of 70 completed[**********************63%*****                  ]  44 of 70 completed[**********************64%******                 ]  45 of 70 completed[**********************66%*******                ]  46 of 70 completed[**********************67%*******                ]  47 of 70 completed[**********************69%********               ]  48 of 70 completed[**********************70%*********              ]  49 of 70 completed[**********************71%*********              ]  50 of 70 completed[**********************73%**********             ]  51 of 70 completed[**********************74%***********            ]  52 of 70 completed[**********************76%***********            ]  53 of 70 completed[**********************77%************           ]  54 of 70 completed[**********************79%*************          ]  55 of 70 completed[**********************80%*************          ]  56 of 70 completed[**********************81%**************         ]  57 of 70 completed[**********************83%***************        ]  58 of 70 completed[**********************84%***************        ]  59 of 70 completed[**********************86%****************       ]  60 of 70 completed[**********************87%*****************      ]  61 of 70 completed[**********************89%******************     ]  62 of 70 completed[**********************90%******************     ]  63 of 70 completed[**********************91%*******************    ]  64 of 70 completed[**********************93%********************   ]  65 of 70 completed[**********************94%********************   ]  66 of 70 completed[**********************96%*********************  ]  67 of 70 completed[**********************97%********************** ]  68 of 70 completed[**********************99%***********************]  69 of 70 completed[*********************100%***********************]  70 of 70 completed
+Using device: mps
+============================================================
+BACKTEST — 5 MODELS × N FOLDS
+LSTM-A Dev Mode: ENABLED
+LSTM-A Tuning: DISABLED
+Scaler Type: standard
+Configured tickers: 70
+============================================================
+Downloading 70 tickers from 2000-01-01 to 2024-12-31...
+Raw data saved: 6288 rows x 350 columns
+Removed 25510 zero-volume rows
+Dropped 0 rows with missing Close
+WARNING: 209 rows with |Return_1d| > 20% — review manually:
+      Date Ticker      Close  Return_1d
+2000-09-29   AAPL   0.385773  -0.518692
+2002-10-09    AEP   6.740593  -0.227848
+2001-04-03    AMT  10.565522  -0.215101
+2001-11-06    AMT   5.118248  -0.354243
+2002-06-27    AMT   2.559124   0.206897
+2002-07-16    AMT   2.010740   0.250000
+2002-08-07    AMT   1.169885  -0.285714
+2002-10-08    AMT   0.548384  -0.210526
+2002-10-23    AMT   0.679996   0.273973
+2002-10-24    AMT   0.840855   0.236559
+2002-11-14    AMT   1.133327   0.220473
+2002-11-18    AMT   1.476980   0.346666
+2002-11-21    AMT   2.120416   0.250000
+2002-11-22    AMT   2.595682   0.224138
+2008-11-24    AMT  18.389135   0.202199
+2000-02-03   AMZN   4.209375   0.212421
+2000-07-14   AMZN   2.131250   0.217857
+2001-01-03   AMZN   0.878125   0.265766
+2001-03-05   AMZN   0.631250   0.262500
+2001-04-09   AMZN   0.559000   0.335723
+2001-07-24   AMZN   0.603000  -0.247661
+2001-11-14   AMZN   0.474500   0.301783
+2001-11-26   AMZN   0.610500   0.344714
+2002-01-22   AMZN   0.630000   0.240157
+2006-07-26   AMZN   1.313000  -0.218220
+2007-04-25   AMZN   2.840500   0.269497
+2007-07-25   AMZN   4.309000   0.244477
+2009-10-23   AMZN   5.924500   0.267951
+2020-03-16     BA 129.610001  -0.238484
+2020-03-24     BA 127.680000   0.208862
+2020-03-25     BA 158.729996   0.243186
+2008-07-16    BAC  16.678200   0.224082
+2008-09-15    BAC  19.923473  -0.213100
+2008-09-19    BAC  28.125500   0.225639
+2008-10-07    BAC  17.837330  -0.262259
+2008-11-24    BAC  10.948533   0.272014
+2008-12-01    BAC   9.642809  -0.209231
+2009-01-20    BAC   3.914272  -0.289694
+2009-01-21    BAC   5.126930   0.309804
+2009-02-06    BAC   4.704803   0.266529
+2009-02-24    BAC   3.630296   0.209718
+2009-02-27    BAC   3.031643  -0.257519
+2009-03-10    BAC   3.686447   0.277333
+2009-03-18    BAC   5.902932   0.223285
+2009-03-23    BAC   6.002981   0.260096
+2009-04-09    BAC   7.349803   0.352691
+2009-04-20    BAC   6.172297  -0.243396
+2011-08-08    BAC   5.043639  -0.203182
+2000-03-06   BKNG 531.201477   0.202500
+2000-04-18   BKNG 376.957977   0.229292
+2000-07-24   BKNG 183.325256  -0.223089
+2000-09-27   BKNG  63.317158  -0.423303
+2000-10-05   BKNG  34.235439  -0.380000
+2000-10-13   BKNG  37.180424   0.216867
+2000-11-03   BKNG  27.793287  -0.310502
+2000-11-08   BKNG  19.142399  -0.240876
+2000-12-08   BKNG  14.356799   0.300000
+2000-12-27   BKNG   8.282768   0.250000
+2001-01-03   BKNG  10.675567   0.288889
+2001-01-11   BKNG  15.277106   0.257576
+2001-02-23   BKNG  15.093043   0.261538
+2001-04-02   BKNG  18.038029   0.209877
+2001-05-01   BKNG  38.814896   0.358763
+2001-06-06   BKNG  41.583179   0.295413
+2001-09-17   BKNG  17.728804  -0.398000
+2001-09-18   BKNG  13.841427  -0.219269
+2002-02-04   BKNG  28.448547  -0.235759
+2002-05-02   BKNG  24.089973  -0.220952
+2002-06-26   BKNG  16.668608  -0.255263
+2002-11-06   BKNG   9.954047  -0.268398
+2003-03-19   BKNG  11.367640   0.312925
+2003-05-02   BKNG  18.494501   0.324895
+2003-07-25   BKNG  31.265915   0.261886
+2003-11-05   BKNG  21.262783  -0.259487
+2005-11-03   BKNG  24.148870   0.261538
+2007-08-08   BKNG  78.100967   0.222307
+2007-11-09   BKNG 101.778648   0.230331
+2008-02-15   BKNG 121.588585   0.211582
+2010-08-04   BKNG 276.141357   0.219491
+2008-09-19      C 150.182343   0.240240
+2008-11-19      C  47.129726  -0.234450
+2008-11-20      C  34.684525  -0.264063
+2008-11-24      C  43.815918   0.578249
+2008-12-01      C  47.497925  -0.221954
+2009-01-14      C  33.359005  -0.232203
+2009-01-21      C  27.025957   0.310714
+2009-02-20      C  14.394021  -0.223108
+2009-02-24      C  19.192036   0.214953
+2009-02-27      C  11.072330  -0.390244
+2009-03-02      C   8.857862  -0.200000
+2009-03-10      C  10.703253   0.380953
+2009-03-16      C  17.199011   0.308989
+2009-03-18      C  22.735180   0.227092
+2009-04-13      C  28.049898   0.250000
+2000-12-08    CCI  17.000156   0.278551
+2001-04-10    CCI  10.755653   0.209194
+2002-03-01    CCI   4.681524   0.272142
+2002-08-09    CCI   0.702614  -0.388298
+2002-08-21    CCI   1.203608   0.201219
+2002-10-24    CCI   1.643506   0.312196
+2008-10-28  CMCSA   5.448164   0.245227
+2020-03-09    COP  27.338779  -0.248401
+2020-03-24    COP  24.666681   0.252139
+2000-05-24   COST  21.265951  -0.215385
+2001-01-03   CSCO  26.731308   0.240150
+2001-10-03   CSCO   9.026368   0.215157
+2002-05-08   CSCO  10.527528   0.243884
+2008-10-13    CVX  34.834507   0.208542
+2020-03-18    CVX  42.203594  -0.221248
+2020-03-24    CVX  51.019962   0.227407
+2020-03-24    ECL 143.468765   0.221610
+2008-10-13    EOG  24.972446   0.204061
+2020-03-09    EOG  28.486588  -0.320072
+2000-10-11   EQIX  97.562309  -0.274725
+2000-10-12   EQIX 122.692055   0.257576
+2000-10-13   EQIX 178.864273   0.457831
+2000-12-08   EQIX 130.083115   0.222222
+2000-12-12   EQIX 156.691025   0.204545
+2000-12-29   EQIX 103.475227   0.250001
+2001-04-06   EQIX  14.043062  -0.424242
+2001-04-09   EQIX  21.759361   0.549474
+2001-04-10   EQIX  26.253145   0.206522
+2001-04-11   EQIX  31.929485   0.216216
+2001-05-02   EQIX  40.917057   0.310606
+2001-07-16   EQIX  32.166008   0.320389
+2001-09-25   EQIX   9.460588  -0.200000
+2001-10-15   EQIX  15.373458   0.226415
+2001-10-25   EQIX   9.697103  -0.293103
+2001-11-27   EQIX  37.842354   0.221374
+2001-11-28   EQIX  45.883865   0.212500
+2001-12-13   EQIX  46.593414   0.270968
+2001-12-26   EQIX  69.771851   0.299560
+2002-02-08   EQIX  43.045692   0.246576
+2002-02-11   EQIX  52.506290   0.219780
+2002-04-18   EQIX  19.394205   0.205882
+2002-04-29   EQIX  11.825736  -0.218750
+2002-07-17   EQIX  11.589227   0.225001
+2002-08-09   EQIX   8.751045  -0.288462
+2002-08-13   EQIX  10.879681   0.243244
+2002-09-04   EQIX   7.804989   0.222223
+2002-09-18   EQIX   6.385898   0.285715
+2002-09-27   EQIX   7.804989   0.320001
+2002-11-25   EQIX   8.041502   0.214286
+2003-01-07   EQIX   5.691135   0.365248
+2003-02-05   EQIX   3.059909   0.235820
+2003-05-05   EQIX   3.976403   0.328395
+2003-05-27   EQIX   5.602442   0.222580
+2003-07-16   EQIX   9.467978   0.216524
+2003-07-23   EQIX  12.941792   0.289396
+2003-08-01   EQIX  10.798378  -0.233071
+2010-10-06   EQIX  51.988892  -0.330669
+2000-10-12     HD  20.200243  -0.287356
+2000-10-20    HON  23.240355   0.282230
+2008-11-24    JPM  17.972378   0.213908
+2009-01-20    JPM  11.932069  -0.207274
+2009-01-21    JPM  14.926628   0.250967
+2009-03-10    JPM  12.862101   0.226416
+2009-03-23    JPM  19.035900   0.246652
+2000-08-09    LLY  38.462776  -0.291781
+2020-03-16    LOW  65.057442  -0.247694
+2007-10-31     MA  17.325157   0.208464
+2013-07-25   META  34.092461   0.296115
+2022-02-03   META 235.908707  -0.263901
+2022-10-27   META  97.177406  -0.245571
+2023-02-02   META 187.300186   0.232824
+2024-02-02   META 471.291534   0.203176
+2020-03-12    MPC  19.080034  -0.270089
+2020-03-25    MPC  17.596310   0.206286
+2004-09-30    MRK  14.487639  -0.267806
+2008-10-10      O   9.962162   0.200392
+2008-10-28      O   9.462019   0.215779
+2020-03-16      O  38.742119  -0.249305
+2020-03-18      O  30.497137  -0.228955
+2001-01-03   ORCL  25.585257   0.213270
+2001-03-02   ORCL  13.492226  -0.210527
+2020-03-13   ORCL  44.012772   0.204271
+2000-03-07     PG  15.312863  -0.302359
+2008-10-28    PLD  10.497839   0.204307
+2008-11-12    PLD   7.539103  -0.300791
+2008-11-13    PLD   9.524878   0.263397
+2008-11-19    PLD   6.406815  -0.210379
+2008-11-24    PLD   7.971535   0.247551
+2008-12-01    PLD   7.482202  -0.236353
+2008-12-11    PLD   9.240381  -0.237916
+2008-12-16    PLD  12.790872   0.250278
+2009-03-23    PLD   8.375518   0.221577
+2024-08-13   SBUX  91.696365   0.244970
+2001-04-03    SHW   4.703041  -0.207878
+2020-03-09    SLB  15.160584  -0.274214
+2008-10-28    SPG  28.023811   0.234125
+2008-11-24    SPG  21.415022   0.253517
+2020-03-16    SPG  47.231354  -0.267127
+2020-03-18    SPG  32.248554  -0.236833
+2020-03-19    SPG  40.016357   0.240873
+2020-11-09    SPG  59.012947   0.278694
+2020-03-16    TJX  38.010075  -0.203995
+2007-08-03   TMUS  49.646221  -0.201435
+2007-11-09   TMUS  25.651609  -0.225962
+2009-08-06   TMUS  14.323478  -0.291568
+2011-08-02   TMUS  16.346928  -0.365884
+2012-07-26   TMUS  13.686171   0.367834
+2008-09-30    UNH  19.625954   0.209048
+2008-10-13    UNH  18.072258   0.347550
+2008-07-16    WFC  17.093266   0.327646
+2009-01-20    WFC   9.118326  -0.238223
+2009-01-28    WFC  13.578177   0.308833
+2009-03-23    WFC  11.312318   0.238741
+2009-04-09    WFC  12.800612   0.316991
+2009-05-04    WFC  15.829412   0.236614
+
+Saved 414650 rows to data/raw/ohlcv_long.csv
+Missing values remaining: 70
+Date range: 2000-01-03 00:00:00 → 2024-12-30 00:00:00
+Tickers: ['AAPL', 'ABBV', 'AEP', 'AMGN', 'AMT', 'AMZN', 'APD', 'BA', 'BAC', 'BKNG', 'BRK-B', 'C', 'CAT', 'CCI', 'CHTR', 'CMCSA', 'COP', 'COST', 'CSCO', 'CVX', 'D', 'DD', 'DIS', 'DUK', 'ECL', 'EOG', 'EQIX', 'EXC', 'FOXA', 'GE', 'GOOGL', 'HD', 'HON', 'JNJ', 'JPM', 'KO', 'LIN', 'LLY', 'LOW', 'MA', 'MCD', 'META', 'MPC', 'MRK', 'MSFT', 'NEE', 'NKE', 'O', 'ORCL', 'PEP', 'PFE', 'PG', 'PLD', 'PM', 'SBUX', 'SHW', 'SLB', 'SO', 'SPG', 'T', 'TJX', 'TMUS', 'UNH', 'UNP', 'UPS', 'V', 'VZ', 'WFC', 'WMT', 'XOM']
+Computing technical indicators per ticker (raw Close)...
+Computing SectorRelReturn and Context Features...
+Dropped 4219 rows with NaN features (expected: ~26 per ticker for MACD warmup)
+
+Saved 410431 rows to data/processed/features.csv
+Feature columns (25): ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'MACD', 'ATR_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d']
+Date range: 2000-03-29 00:00:00 -> 2024-12-30 00:00:00
+Tickers: 70
+NOTE: Wavelet denoising is applied per-fold in main.py (not cached)
+Dropped 70 rows (last trading day per ticker, no future return)
+
+Class distribution:
+  Target=1 (>= median): 206767 (50.4%)
+  Target=0 (<  median): 203594 (49.6%)
+
+Total samples: 410361
+Date range:    2000-03-29 00:00:00 → 2024-12-27 00:00:00
+Saved full cache (with targets) to data/processed/features.csv
+
+Feature sets:
+  LSTM-A: ['MACD', 'RSI_14', 'ATR_14', 'Return_1d', 'Return_5d', 'Return_21d'] (6 features)
+  LSTM-B: ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d'] (23 features)
+  Baselines (LR/RF/XGB): ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d'] (23 features)
+Generated 44 folds mode=rolling stride=125 (train=500, val=125d, test=125d, total dates=6227)
+
+Fold |  Train start |    Train end |    Val start |      Val end |   Test start |     Test end
+----------------------------------------------------------------------------------------------
+   1 |   2000-03-29 |   2002-03-28 |   2002-04-01 |   2002-09-25 |   2002-09-26 |   2003-03-26
+   2 |   2000-09-26 |   2002-09-25 |   2002-09-26 |   2003-03-26 |   2003-03-27 |   2003-09-23
+   3 |   2001-03-27 |   2003-03-26 |   2003-03-27 |   2003-09-23 |   2003-09-24 |   2004-03-23
+   4 |   2001-09-28 |   2003-09-23 |   2003-09-24 |   2004-03-23 |   2004-03-24 |   2004-09-21
+   5 |   2002-04-01 |   2004-03-23 |   2004-03-24 |   2004-09-21 |   2004-09-22 |   2005-03-21
+   6 |   2002-09-26 |   2004-09-21 |   2004-09-22 |   2005-03-21 |   2005-03-22 |   2005-09-16
+   7 |   2003-03-27 |   2005-03-21 |   2005-03-22 |   2005-09-16 |   2005-09-19 |   2006-03-17
+   8 |   2003-09-24 |   2005-09-16 |   2005-09-19 |   2006-03-17 |   2006-03-20 |   2006-09-14
+   9 |   2004-03-24 |   2006-03-17 |   2006-03-20 |   2006-09-14 |   2006-09-15 |   2007-03-16
+  10 |   2004-09-22 |   2006-09-14 |   2006-09-15 |   2007-03-16 |   2007-03-19 |   2007-09-13
+  11 |   2005-03-22 |   2007-03-16 |   2007-03-19 |   2007-09-13 |   2007-09-14 |   2008-03-13
+  12 |   2005-09-19 |   2007-09-13 |   2007-09-14 |   2008-03-13 |   2008-03-14 |   2008-09-10
+  13 |   2006-03-20 |   2008-03-13 |   2008-03-14 |   2008-09-10 |   2008-09-11 |   2009-03-11
+  14 |   2006-09-15 |   2008-09-10 |   2008-09-11 |   2009-03-11 |   2009-03-12 |   2009-09-08
+  15 |   2007-03-19 |   2009-03-11 |   2009-03-12 |   2009-09-08 |   2009-09-09 |   2010-03-09
+  16 |   2007-09-14 |   2009-09-08 |   2009-09-09 |   2010-03-09 |   2010-03-10 |   2010-09-03
+  17 |   2008-03-14 |   2010-03-09 |   2010-03-10 |   2010-09-03 |   2010-09-07 |   2011-03-04
+  18 |   2008-09-11 |   2010-09-03 |   2010-09-07 |   2011-03-04 |   2011-03-07 |   2011-08-31
+  19 |   2009-03-12 |   2011-03-04 |   2011-03-07 |   2011-08-31 |   2011-09-01 |   2012-03-01
+  20 |   2009-09-09 |   2011-08-31 |   2011-09-01 |   2012-03-01 |   2012-03-02 |   2012-08-28
+  21 |   2010-03-10 |   2012-03-01 |   2012-03-02 |   2012-08-28 |   2012-08-29 |   2013-03-01
+  22 |   2010-09-07 |   2012-08-28 |   2012-08-29 |   2013-03-01 |   2013-03-04 |   2013-08-28
+  23 |   2011-03-07 |   2013-03-01 |   2013-03-04 |   2013-08-28 |   2013-08-29 |   2014-02-27
+  24 |   2011-09-01 |   2013-08-28 |   2013-08-29 |   2014-02-27 |   2014-02-28 |   2014-08-26
+  25 |   2012-03-02 |   2014-02-27 |   2014-02-28 |   2014-08-26 |   2014-08-27 |   2015-02-25
+  26 |   2012-08-29 |   2014-08-26 |   2014-08-27 |   2015-02-25 |   2015-02-26 |   2015-08-24
+  27 |   2013-03-04 |   2015-02-25 |   2015-02-26 |   2015-08-24 |   2015-08-25 |   2016-02-23
+  28 |   2013-08-29 |   2015-08-24 |   2015-08-25 |   2016-02-23 |   2016-02-24 |   2016-08-19
+  29 |   2014-02-28 |   2016-02-23 |   2016-02-24 |   2016-08-19 |   2016-08-22 |   2017-02-17
+  30 |   2014-08-27 |   2016-08-19 |   2016-08-22 |   2017-02-17 |   2017-02-21 |   2017-08-17
+  31 |   2015-02-26 |   2017-02-17 |   2017-02-21 |   2017-08-17 |   2017-08-18 |   2018-02-15
+  32 |   2015-08-25 |   2017-08-17 |   2017-08-18 |   2018-02-15 |   2018-02-16 |   2018-08-15
+  33 |   2016-02-24 |   2018-02-15 |   2018-02-16 |   2018-08-15 |   2018-08-16 |   2019-02-14
+  34 |   2016-08-22 |   2018-08-15 |   2018-08-16 |   2019-02-14 |   2019-02-15 |   2019-08-14
+  35 |   2017-02-21 |   2019-02-14 |   2019-02-15 |   2019-08-14 |   2019-08-15 |   2020-02-12
+  36 |   2017-08-18 |   2019-08-14 |   2019-08-15 |   2020-02-12 |   2020-02-13 |   2020-08-11
+  37 |   2018-02-16 |   2020-02-12 |   2020-02-13 |   2020-08-11 |   2020-08-12 |   2021-02-09
+  38 |   2018-08-16 |   2020-08-11 |   2020-08-12 |   2021-02-09 |   2021-02-10 |   2021-08-09
+  39 |   2019-02-15 |   2021-02-09 |   2021-02-10 |   2021-08-09 |   2021-08-10 |   2022-02-04
+  40 |   2019-08-15 |   2021-08-09 |   2021-08-10 |   2022-02-04 |   2022-02-07 |   2022-08-05
+  41 |   2020-02-13 |   2022-02-04 |   2022-02-07 |   2022-08-05 |   2022-08-08 |   2023-02-03
+  42 |   2020-08-12 |   2022-08-05 |   2022-08-08 |   2023-02-03 |   2023-02-06 |   2023-08-04
+  43 |   2021-02-10 |   2023-02-03 |   2023-02-06 |   2023-08-04 |   2023-08-07 |   2024-02-02
+  44 |   2021-08-10 |   2023-08-04 |   2023-08-07 |   2024-02-02 |   2024-02-05 |   2024-08-02
+Walk-Forward Folds:   0%|          | 0/44 [00:00<?, ?fold/s]INFO pipeline: [fold1 train] class balance 0:14827, 1:15018 (n=29845)
+INFO pipeline: [fold1 val] class balance 0:3749, 1:3751 (n=7500)
+INFO pipeline: [fold1 test] class balance 0:3750, 1:3750 (n=7500)
+
+============================================================
+=== Fold 1/44 ===
+============================================================
+  Train:  29845 rows | Val:  7500 rows | Test:  7500 rows
+
+  [LR]      fitting...
+  LR  best C=0.0010  CV AUC=0.5247
+  [LR]      fit done in 3.4s
+  [RF]      fitting...
+  RF  best params={'n_estimators': 300, 'max_depth': 5, 'min_samples_leaf': 30}  val AUC=0.5229
+  [RF]      fit done in 6.5s
+  [XGBoost] fitting...
+  XGB best params={'max_depth': 5, 'eta': 0.01, 'subsample': 0.6}  val AUC=0.5260
+  [XGBoost] fit done in 1.0s
+  [LSTM-A]  building sequences & training...
+    LSTM-A sequences: train=26245, val=7500, test=7500
+    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; using fixed config defaults.
+    [LSTM-A Dev Mode] optimizer=adam lr=0.001 batch=256 hidden=64 layers=2 dropout=0.2
+
+LSTM-A:   0%|          | 0/200 [00:00<?, ?epoch/s][AINFO models.lstm_model: [LSTM-A] epoch 1/200 train_loss=0.69308 tr_eval=0.69232 val_loss=0.69318 lr=1.00e-03 tr_auc=0.5211 va_auc=0.4986
+
+LSTM-A:   0%|          | 0/200 [00:04<?, ?epoch/s, val_loss=0.6932, best=0.6932][A
+LSTM-A:   0%|          | 1/200 [00:04<13:32,  4.08s/epoch, val_loss=0.6932, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 2/200 train_loss=0.69235 tr_eval=0.69177 val_loss=0.69299 lr=1.00e-03 tr_auc=0.5307 va_auc=0.5177
+
+LSTM-A:   0%|          | 1/200 [00:07<13:32,  4.08s/epoch, val_loss=0.6930, best=0.6930][A
+LSTM-A:   1%|          | 2/200 [00:07<11:57,  3.63s/epoch, val_loss=0.6930, best=0.6930][AINFO models.lstm_model: [LSTM-A] epoch 3/200 train_loss=0.69233 tr_eval=0.69157 val_loss=0.69302 lr=1.00e-03 tr_auc=0.5324 va_auc=0.5159
+
+LSTM-A:   1%|          | 2/200 [00:10<11:57,  3.63s/epoch, val_loss=0.6930, best=0.6930][A
+LSTM-A:   2%|▏         | 3/200 [00:10<11:38,  3.54s/epoch, val_loss=0.6930, best=0.6930][AINFO models.lstm_model: [LSTM-A] epoch 4/200 train_loss=0.69188 tr_eval=0.69140 val_loss=0.69304 lr=1.00e-03 tr_auc=0.5335 va_auc=0.5090
+
+LSTM-A:   2%|▏         | 3/200 [00:14<11:38,  3.54s/epoch, val_loss=0.6930, best=0.6930][A
+LSTM-A:   2%|▏         | 4/200 [00:14<11:37,  3.56s/epoch, val_loss=0.6930, best=0.6930][AINFO models.lstm_model: [LSTM-A] epoch 5/200 train_loss=0.69183 tr_eval=0.69119 val_loss=0.69301 lr=1.00e-03 tr_auc=0.5348 va_auc=0.5140
+
+LSTM-A:   2%|▏         | 4/200 [00:17<11:37,  3.56s/epoch, val_loss=0.6930, best=0.6930][A
+LSTM-A:   2%|▎         | 5/200 [00:17<11:09,  3.43s/epoch, val_loss=0.6930, best=0.6930][AINFO models.lstm_model: [LSTM-A] epoch 6/200 train_loss=0.69173 tr_eval=0.69110 val_loss=0.69291 lr=1.00e-03 tr_auc=0.5358 va_auc=0.5144
+
+LSTM-A:   2%|▎         | 5/200 [00:21<11:09,  3.43s/epoch, val_loss=0.6929, best=0.6929][A
+LSTM-A:   3%|▎         | 6/200 [00:21<11:02,  3.42s/epoch, val_loss=0.6929, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 7/200 train_loss=0.69140 tr_eval=0.69183 val_loss=0.69319 lr=1.00e-03 tr_auc=0.5354 va_auc=0.5184
+
+LSTM-A:   3%|▎         | 6/200 [00:24<11:02,  3.42s/epoch, val_loss=0.6932, best=0.6929][A
+LSTM-A:   4%|▎         | 7/200 [00:24<10:43,  3.33s/epoch, val_loss=0.6932, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 8/200 train_loss=0.69157 tr_eval=0.69089 val_loss=0.69292 lr=1.00e-03 tr_auc=0.5375 va_auc=0.5147
+
+LSTM-A:   4%|▎         | 7/200 [00:27<10:43,  3.33s/epoch, val_loss=0.6929, best=0.6929][A
+LSTM-A:   4%|▍         | 8/200 [00:27<10:49,  3.38s/epoch, val_loss=0.6929, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 9/200 train_loss=0.69120 tr_eval=0.69066 val_loss=0.69291 lr=1.00e-03 tr_auc=0.5383 va_auc=0.5156
+
+LSTM-A:   4%|▍         | 8/200 [00:31<10:49,  3.38s/epoch, val_loss=0.6929, best=0.6929][A
+LSTM-A:   4%|▍         | 9/200 [00:31<10:53,  3.42s/epoch, val_loss=0.6929, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 10/200 train_loss=0.69136 tr_eval=0.69085 val_loss=0.69290 lr=1.00e-03 tr_auc=0.5378 va_auc=0.5159
+
+LSTM-A:   4%|▍         | 9/200 [00:34<10:53,  3.42s/epoch, val_loss=0.6929, best=0.6929][A
+LSTM-A:   5%|▌         | 10/200 [00:34<10:42,  3.38s/epoch, val_loss=0.6929, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 11/200 train_loss=0.69117 tr_eval=0.69062 val_loss=0.69303 lr=1.00e-03 tr_auc=0.5375 va_auc=0.5154
+
+LSTM-A:   5%|▌         | 10/200 [00:37<10:42,  3.38s/epoch, val_loss=0.6930, best=0.6929][A
+LSTM-A:   6%|▌         | 11/200 [00:37<10:45,  3.42s/epoch, val_loss=0.6930, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 12/200 train_loss=0.69107 tr_eval=0.69034 val_loss=0.69296 lr=1.00e-03 tr_auc=0.5393 va_auc=0.5150
+
+LSTM-A:   6%|▌         | 11/200 [00:41<10:45,  3.42s/epoch, val_loss=0.6930, best=0.6929][A
+LSTM-A:   6%|▌         | 12/200 [00:41<10:45,  3.43s/epoch, val_loss=0.6930, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 13/200 train_loss=0.69103 tr_eval=0.69007 val_loss=0.69286 lr=1.00e-03 tr_auc=0.5413 va_auc=0.5152
+
+LSTM-A:   6%|▌         | 12/200 [00:44<10:45,  3.43s/epoch, val_loss=0.6929, best=0.6929][A
+LSTM-A:   6%|▋         | 13/200 [00:44<10:32,  3.38s/epoch, val_loss=0.6929, best=0.6929][AINFO models.lstm_model: [LSTM-A] epoch 14/200 train_loss=0.69084 tr_eval=0.69003 val_loss=0.69280 lr=1.00e-03 tr_auc=0.5427 va_auc=0.5145
+
+LSTM-A:   6%|▋         | 13/200 [00:48<10:32,  3.38s/epoch, val_loss=0.6928, best=0.6928][A
+LSTM-A:   7%|▋         | 14/200 [00:48<10:28,  3.38s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 15/200 train_loss=0.69050 tr_eval=0.68961 val_loss=0.69299 lr=1.00e-03 tr_auc=0.5433 va_auc=0.5163
+
+LSTM-A:   7%|▋         | 14/200 [00:51<10:28,  3.38s/epoch, val_loss=0.6930, best=0.6928][A
+LSTM-A:   8%|▊         | 15/200 [00:51<10:28,  3.40s/epoch, val_loss=0.6930, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 16/200 train_loss=0.69037 tr_eval=0.68928 val_loss=0.69286 lr=1.00e-03 tr_auc=0.5451 va_auc=0.5159
+
+LSTM-A:   8%|▊         | 15/200 [00:54<10:28,  3.40s/epoch, val_loss=0.6929, best=0.6928][A
+LSTM-A:   8%|▊         | 16/200 [00:54<10:29,  3.42s/epoch, val_loss=0.6929, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 17/200 train_loss=0.69016 tr_eval=0.68966 val_loss=0.69281 lr=1.00e-03 tr_auc=0.5449 va_auc=0.5153
+
+LSTM-A:   8%|▊         | 16/200 [00:58<10:29,  3.42s/epoch, val_loss=0.6928, best=0.6928][A
+LSTM-A:   8%|▊         | 17/200 [00:58<10:28,  3.44s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 18/200 train_loss=0.69011 tr_eval=0.68930 val_loss=0.69290 lr=1.00e-03 tr_auc=0.5474 va_auc=0.5162
+
+LSTM-A:   8%|▊         | 17/200 [01:01<10:28,  3.44s/epoch, val_loss=0.6929, best=0.6928][A
+LSTM-A:   9%|▉         | 18/200 [01:01<10:02,  3.31s/epoch, val_loss=0.6929, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 19/200 train_loss=0.69020 tr_eval=0.68952 val_loss=0.69307 lr=1.00e-03 tr_auc=0.5438 va_auc=0.5162
+
+LSTM-A:   9%|▉         | 18/200 [01:04<10:02,  3.31s/epoch, val_loss=0.6931, best=0.6928][A
+LSTM-A:  10%|▉         | 19/200 [01:04<09:57,  3.30s/epoch, val_loss=0.6931, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 20/200 train_loss=0.68984 tr_eval=0.68902 val_loss=0.69277 lr=1.00e-03 tr_auc=0.5474 va_auc=0.5193
+
+LSTM-A:  10%|▉         | 19/200 [01:08<09:57,  3.30s/epoch, val_loss=0.6928, best=0.6928][A
+LSTM-A:  10%|█         | 20/200 [01:08<10:23,  3.46s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM-A] epoch 21/200 train_loss=0.68967 tr_eval=0.68855 val_loss=0.69275 lr=1.00e-03 tr_auc=0.5499 va_auc=0.5198
+
+LSTM-A:  10%|█         | 20/200 [01:11<10:23,  3.46s/epoch, val_loss=0.6927, best=0.6927][A
+LSTM-A:  10%|█         | 21/200 [01:11<10:12,  3.42s/epoch, val_loss=0.6927, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 22/200 train_loss=0.68939 tr_eval=0.68839 val_loss=0.69300 lr=1.00e-03 tr_auc=0.5498 va_auc=0.5169
+
+LSTM-A:  10%|█         | 21/200 [01:15<10:12,  3.42s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  11%|█         | 22/200 [01:15<10:00,  3.37s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 23/200 train_loss=0.68934 tr_eval=0.68796 val_loss=0.69293 lr=1.00e-03 tr_auc=0.5507 va_auc=0.5201
+
+LSTM-A:  11%|█         | 22/200 [01:18<10:00,  3.37s/epoch, val_loss=0.6929, best=0.6927][A
+LSTM-A:  12%|█▏        | 23/200 [01:18<09:58,  3.38s/epoch, val_loss=0.6929, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 24/200 train_loss=0.68910 tr_eval=0.68805 val_loss=0.69288 lr=1.00e-03 tr_auc=0.5511 va_auc=0.5169
+
+LSTM-A:  12%|█▏        | 23/200 [01:21<09:58,  3.38s/epoch, val_loss=0.6929, best=0.6927][A
+LSTM-A:  12%|█▏        | 24/200 [01:21<09:43,  3.32s/epoch, val_loss=0.6929, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 25/200 train_loss=0.68929 tr_eval=0.68761 val_loss=0.69286 lr=1.00e-03 tr_auc=0.5533 va_auc=0.5192
+
+LSTM-A:  12%|█▏        | 24/200 [01:25<09:43,  3.32s/epoch, val_loss=0.6929, best=0.6927][A
+LSTM-A:  12%|█▎        | 25/200 [01:25<09:49,  3.37s/epoch, val_loss=0.6929, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 26/200 train_loss=0.68870 tr_eval=0.68755 val_loss=0.69313 lr=1.00e-03 tr_auc=0.5532 va_auc=0.5175
+
+LSTM-A:  12%|█▎        | 25/200 [01:28<09:49,  3.37s/epoch, val_loss=0.6931, best=0.6927][A
+LSTM-A:  13%|█▎        | 26/200 [01:28<09:45,  3.37s/epoch, val_loss=0.6931, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 27/200 train_loss=0.68850 tr_eval=0.68685 val_loss=0.69290 lr=1.00e-03 tr_auc=0.5557 va_auc=0.5187
+
+LSTM-A:  13%|█▎        | 26/200 [01:31<09:45,  3.37s/epoch, val_loss=0.6929, best=0.6927][A
+LSTM-A:  14%|█▎        | 27/200 [01:31<09:39,  3.35s/epoch, val_loss=0.6929, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 28/200 train_loss=0.68806 tr_eval=0.68657 val_loss=0.69297 lr=1.00e-03 tr_auc=0.5569 va_auc=0.5166
+
+LSTM-A:  14%|█▎        | 27/200 [01:35<09:39,  3.35s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  14%|█▍        | 28/200 [01:35<09:41,  3.38s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 29/200 train_loss=0.68844 tr_eval=0.68667 val_loss=0.69304 lr=1.00e-03 tr_auc=0.5584 va_auc=0.5144
+
+LSTM-A:  14%|█▍        | 28/200 [01:38<09:41,  3.38s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  14%|█▍        | 29/200 [01:38<09:34,  3.36s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 30/200 train_loss=0.68745 tr_eval=0.68585 val_loss=0.69304 lr=1.00e-03 tr_auc=0.5606 va_auc=0.5157
+
+LSTM-A:  14%|█▍        | 29/200 [01:41<09:34,  3.36s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  15%|█▌        | 30/200 [01:41<09:26,  3.33s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 31/200 train_loss=0.68723 tr_eval=0.68621 val_loss=0.69303 lr=1.00e-03 tr_auc=0.5592 va_auc=0.5119
+
+LSTM-A:  15%|█▌        | 30/200 [01:45<09:26,  3.33s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  16%|█▌        | 31/200 [01:45<09:34,  3.40s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 32/200 train_loss=0.68667 tr_eval=0.68518 val_loss=0.69305 lr=1.00e-03 tr_auc=0.5641 va_auc=0.5133
+
+LSTM-A:  16%|█▌        | 31/200 [01:48<09:34,  3.40s/epoch, val_loss=0.6930, best=0.6927][A
+LSTM-A:  16%|█▌        | 32/200 [01:48<09:21,  3.34s/epoch, val_loss=0.6930, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 33/200 train_loss=0.68677 tr_eval=0.68538 val_loss=0.69315 lr=1.00e-03 tr_auc=0.5628 va_auc=0.5165
+
+LSTM-A:  16%|█▌        | 32/200 [01:51<09:21,  3.34s/epoch, val_loss=0.6932, best=0.6927][A
+LSTM-A:  16%|█▋        | 33/200 [01:51<09:15,  3.33s/epoch, val_loss=0.6932, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 34/200 train_loss=0.68665 tr_eval=0.68415 val_loss=0.69351 lr=1.00e-03 tr_auc=0.5669 va_auc=0.5188
+
+LSTM-A:  16%|█▋        | 33/200 [01:55<09:15,  3.33s/epoch, val_loss=0.6935, best=0.6927][A
+LSTM-A:  17%|█▋        | 34/200 [01:55<09:17,  3.36s/epoch, val_loss=0.6935, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 35/200 train_loss=0.68575 tr_eval=0.68441 val_loss=0.69306 lr=1.00e-03 tr_auc=0.5651 va_auc=0.5141
+
+LSTM-A:  17%|█▋        | 34/200 [01:58<09:17,  3.36s/epoch, val_loss=0.6931, best=0.6927][A
+LSTM-A:  18%|█▊        | 35/200 [01:58<09:18,  3.39s/epoch, val_loss=0.6931, best=0.6927][AINFO models.lstm_model: [LSTM-A] epoch 36/200 train_loss=0.68572 tr_eval=0.68371 val_loss=0.69315 lr=1.00e-03 tr_auc=0.5663 va_auc=0.5157
+
+LSTM-A:  18%|█▊        | 35/200 [02:02<09:18,  3.39s/epoch, val_loss=0.6927, status=early stop][ALSTM-A:  18%|█▊        | 35/200 [02:02<09:36,  3.49s/epoch, val_loss=0.6927, status=early stop]
+  [LSTM-A] stopped: early_stop_patience | best_epoch=21 | best_val_loss=0.6927
+  [LSTM-A] training log: /Users/abdelrahmanelenany/Documents/Study/Bachelor Thesis/stock-prediction/pipeline/../models/../reports/training_logs/fold1_lstm-a.csv
+  [LSTM-A]  fit done in 122.5s
+  [LSTM-B]  building sequences & training...
+    LSTM-B sequences: train=26245, val=7500, test=7500
+
+LSTM-B:   0%|          | 0/200 [00:00<?, ?epoch/s][AINFO models.lstm_model: [LSTM-B] epoch 1/200 train_loss=0.69371 tr_eval=0.69090 val_loss=0.69282 lr=1.00e-03 tr_auc=0.5414 va_auc=0.5217
+
+LSTM-B:   0%|          | 0/200 [00:03<?, ?epoch/s, val_loss=0.6928, best=0.6928][A
+LSTM-B:   0%|          | 1/200 [00:03<11:54,  3.59s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM-B] epoch 2/200 train_loss=0.69210 tr_eval=0.68986 val_loss=0.69263 lr=1.00e-03 tr_auc=0.5480 va_auc=0.5254
+
+LSTM-B:   0%|          | 1/200 [00:07<11:54,  3.59s/epoch, val_loss=0.6926, best=0.6926][A
+LSTM-B:   1%|          | 2/200 [00:07<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM-B] epoch 3/200 train_loss=0.69034 tr_eval=0.68851 val_loss=0.69259 lr=1.00e-03 tr_auc=0.5575 va_auc=0.5290
+
+LSTM-B:   1%|          | 2/200 [00:10<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][A
+LSTM-B:   2%|▏         | 3/200 [00:10<11:17,  3.44s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM-B] epoch 4/200 train_loss=0.68991 tr_eval=0.68751 val_loss=0.69247 lr=1.00e-03 tr_auc=0.5609 va_auc=0.5273
+
+LSTM-B:   2%|▏         | 3/200 [00:13<11:17,  3.44s/epoch, val_loss=0.6925, best=0.6925][A
+LSTM-B:   2%|▏         | 4/200 [00:13<11:06,  3.40s/epoch, val_loss=0.6925, best=0.6925][AINFO models.lstm_model: [LSTM-B] epoch 5/200 train_loss=0.68862 tr_eval=0.68590 val_loss=0.69237 lr=1.00e-03 tr_auc=0.5682 va_auc=0.5267
+
+LSTM-B:   2%|▏         | 4/200 [00:17<11:06,  3.40s/epoch, val_loss=0.6924, best=0.6924][A
+LSTM-B:   2%|▎         | 5/200 [00:17<11:15,  3.46s/epoch, val_loss=0.6924, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 6/200 train_loss=0.68749 tr_eval=0.68395 val_loss=0.69299 lr=1.00e-03 tr_auc=0.5765 va_auc=0.5185
+
+LSTM-B:   2%|▎         | 5/200 [00:21<11:15,  3.46s/epoch, val_loss=0.6930, best=0.6924][A
+LSTM-B:   3%|▎         | 6/200 [00:21<11:25,  3.53s/epoch, val_loss=0.6930, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 7/200 train_loss=0.68611 tr_eval=0.68199 val_loss=0.69293 lr=1.00e-03 tr_auc=0.5835 va_auc=0.5210
+
+LSTM-B:   3%|▎         | 6/200 [00:24<11:25,  3.53s/epoch, val_loss=0.6929, best=0.6924][A
+LSTM-B:   4%|▎         | 7/200 [00:24<11:15,  3.50s/epoch, val_loss=0.6929, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 8/200 train_loss=0.68471 tr_eval=0.68155 val_loss=0.69313 lr=1.00e-03 tr_auc=0.5876 va_auc=0.5256
+
+LSTM-B:   4%|▎         | 7/200 [00:27<11:15,  3.50s/epoch, val_loss=0.6931, best=0.6924][A
+LSTM-B:   4%|▍         | 8/200 [00:27<11:08,  3.48s/epoch, val_loss=0.6931, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 9/200 train_loss=0.68327 tr_eval=0.67933 val_loss=0.69398 lr=1.00e-03 tr_auc=0.5919 va_auc=0.5065
+
+LSTM-B:   4%|▍         | 8/200 [00:31<11:08,  3.48s/epoch, val_loss=0.6940, best=0.6924][A
+LSTM-B:   4%|▍         | 9/200 [00:31<11:09,  3.51s/epoch, val_loss=0.6940, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 10/200 train_loss=0.68105 tr_eval=0.67768 val_loss=0.69457 lr=1.00e-03 tr_auc=0.6000 va_auc=0.5153
+
+LSTM-B:   4%|▍         | 9/200 [00:34<11:09,  3.51s/epoch, val_loss=0.6946, best=0.6924][A
+LSTM-B:   5%|▌         | 10/200 [00:34<11:08,  3.52s/epoch, val_loss=0.6946, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 11/200 train_loss=0.68003 tr_eval=0.67483 val_loss=0.69441 lr=1.00e-03 tr_auc=0.6061 va_auc=0.5075
+
+LSTM-B:   5%|▌         | 10/200 [00:38<11:08,  3.52s/epoch, val_loss=0.6944, best=0.6924][A
+LSTM-B:   6%|▌         | 11/200 [00:38<10:49,  3.44s/epoch, val_loss=0.6944, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 12/200 train_loss=0.67725 tr_eval=0.67140 val_loss=0.69391 lr=1.00e-03 tr_auc=0.6161 va_auc=0.5237
+
+LSTM-B:   6%|▌         | 11/200 [00:41<10:49,  3.44s/epoch, val_loss=0.6939, best=0.6924][A
+LSTM-B:   6%|▌         | 12/200 [00:41<10:55,  3.49s/epoch, val_loss=0.6939, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 13/200 train_loss=0.67547 tr_eval=0.66709 val_loss=0.69354 lr=5.00e-04 tr_auc=0.6296 va_auc=0.5188
+
+LSTM-B:   6%|▌         | 12/200 [00:45<10:55,  3.49s/epoch, val_loss=0.6935, best=0.6924][A
+LSTM-B:   6%|▋         | 13/200 [00:45<10:55,  3.50s/epoch, val_loss=0.6935, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 14/200 train_loss=0.66899 tr_eval=0.66056 val_loss=0.69475 lr=5.00e-04 tr_auc=0.6428 va_auc=0.5163
+
+LSTM-B:   6%|▋         | 13/200 [00:48<10:55,  3.50s/epoch, val_loss=0.6948, best=0.6924][A
+LSTM-B:   7%|▋         | 14/200 [00:48<10:49,  3.49s/epoch, val_loss=0.6948, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 15/200 train_loss=0.66552 tr_eval=0.65795 val_loss=0.69496 lr=5.00e-04 tr_auc=0.6466 va_auc=0.5193
+
+LSTM-B:   7%|▋         | 14/200 [00:52<10:49,  3.49s/epoch, val_loss=0.6950, best=0.6924][A
+LSTM-B:   8%|▊         | 15/200 [00:52<10:48,  3.50s/epoch, val_loss=0.6950, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 16/200 train_loss=0.66276 tr_eval=0.65516 val_loss=0.69509 lr=5.00e-04 tr_auc=0.6531 va_auc=0.5186
+
+LSTM-B:   8%|▊         | 15/200 [00:55<10:48,  3.50s/epoch, val_loss=0.6951, best=0.6924][A
+LSTM-B:   8%|▊         | 16/200 [00:55<10:30,  3.43s/epoch, val_loss=0.6951, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 17/200 train_loss=0.66090 tr_eval=0.65183 val_loss=0.69633 lr=5.00e-04 tr_auc=0.6592 va_auc=0.5181
+
+LSTM-B:   8%|▊         | 16/200 [00:59<10:30,  3.43s/epoch, val_loss=0.6963, best=0.6924][A
+LSTM-B:   8%|▊         | 17/200 [00:59<10:33,  3.46s/epoch, val_loss=0.6963, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 18/200 train_loss=0.65857 tr_eval=0.64950 val_loss=0.69765 lr=5.00e-04 tr_auc=0.6638 va_auc=0.5206
+
+LSTM-B:   8%|▊         | 17/200 [01:02<10:33,  3.46s/epoch, val_loss=0.6976, best=0.6924][A
+LSTM-B:   9%|▉         | 18/200 [01:02<10:20,  3.41s/epoch, val_loss=0.6976, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 19/200 train_loss=0.65499 tr_eval=0.64726 val_loss=0.69812 lr=5.00e-04 tr_auc=0.6678 va_auc=0.5157
+
+LSTM-B:   9%|▉         | 18/200 [01:05<10:20,  3.41s/epoch, val_loss=0.6981, best=0.6924][A
+LSTM-B:  10%|▉         | 19/200 [01:05<10:20,  3.43s/epoch, val_loss=0.6981, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 20/200 train_loss=0.65299 tr_eval=0.64365 val_loss=0.69941 lr=5.00e-04 tr_auc=0.6721 va_auc=0.5153
+
+LSTM-B:  10%|▉         | 19/200 [01:08<10:20,  3.43s/epoch, val_loss=0.6924, status=early stop][ALSTM-B:  10%|▉         | 19/200 [01:08<10:56,  3.63s/epoch, val_loss=0.6924, status=early stop]
+Walk-Forward Folds:   2%|▏         | 1/44 [03:23<2:25:46, 203.41s/fold]INFO pipeline: [fold2 train] class balance 0:14965, 1:15005 (n=29970)
+INFO pipeline: [fold2 val] class balance 0:3750, 1:3750 (n=7500)
+INFO pipeline: [fold2 test] class balance 0:3750, 1:3750 (n=7500)
+  [LSTM-B] stopped: early_stop_patience | best_epoch=5 | best_val_loss=0.6924
+  [LSTM-B] training log: /Users/abdelrahmanelenany/Documents/Study/Bachelor Thesis/stock-prediction/pipeline/../models/../reports/training_logs/fold1_lstm-b.csv
+  [LSTM-B]  fit done in 69.3s
+  Fold report: reports/fold_reports/fold_001.json
+  Predictions: LR/RF/XGB=7500, LSTM-A=7500, LSTM-B=7500
+
+============================================================
+=== Fold 2/44 ===
+============================================================
+  Train:  29970 rows | Val:  7500 rows | Test:  7500 rows
+
+  [LR]      fitting...
+  LR  best C=0.0010  CV AUC=0.5208
+  [LR]      fit done in 0.4s
+  [RF]      fitting...
+  RF  best params={'n_estimators': 300, 'max_depth': 5, 'min_samples_leaf': 30}  val AUC=0.5197
+  [RF]      fit done in 6.3s
+  [XGBoost] fitting...
+  XGB best params={'max_depth': 3, 'eta': 0.01, 'subsample': 0.7}  val AUC=0.5310
+  [XGBoost] fit done in 0.6s
+  [LSTM-A]  building sequences & training...
+    LSTM-A sequences: train=26370, val=7500, test=7500
+    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; using fixed config defaults.
+    [LSTM-A Dev Mode] optimizer=adam lr=0.001 batch=256 hidden=64 layers=2 dropout=0.2
+
+LSTM-A:   0%|          | 0/200 [00:00<?, ?epoch/s][AINFO models.lstm_model: [LSTM-A] epoch 1/200 train_loss=0.69301 tr_eval=0.69261 val_loss=0.69316 lr=1.00e-03 tr_auc=0.5213 va_auc=0.5038
+
+LSTM-A:   0%|          | 0/200 [00:03<?, ?epoch/s, val_loss=0.6932, best=0.6932][A
+LSTM-A:   0%|          | 1/200 [00:03<12:46,  3.85s/epoch, val_loss=0.6932, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 2/200 train_loss=0.69287 tr_eval=0.69237 val_loss=0.69316 lr=1.00e-03 tr_auc=0.5231 va_auc=0.5049
+
+LSTM-A:   0%|          | 1/200 [00:07<12:46,  3.85s/epoch, val_loss=0.6932, best=0.6932][A
+LSTM-A:   1%|          | 2/200 [00:07<11:30,  3.49s/epoch, val_loss=0.6932, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 3/200 train_loss=0.69244 tr_eval=0.69208 val_loss=0.69339 lr=1.00e-03 tr_auc=0.5289 va_auc=0.4989
+
+LSTM-A:   1%|          | 2/200 [00:10<11:30,  3.49s/epoch, val_loss=0.6934, best=0.6932][A
+LSTM-A:   2%|▏         | 3/200 [00:10<11:37,  3.54s/epoch, val_loss=0.6934, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 4/200 train_loss=0.69252 tr_eval=0.69195 val_loss=0.69337 lr=1.00e-03 tr_auc=0.5285 va_auc=0.5058
+
+LSTM-A:   2%|▏         | 3/200 [00:14<11:37,  3.54s/epoch, val_loss=0.6934, best=0.6932][A
+LSTM-A:   2%|▏         | 4/200 [00:14<11:21,  3.48s/epoch, val_loss=0.6934, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 5/200 train_loss=0.69231 tr_eval=0.69189 val_loss=0.69328 lr=1.00e-03 tr_auc=0.5297 va_auc=0.4988
+
+LSTM-A:   2%|▏         | 4/200 [00:17<11:21,  3.48s/epoch, val_loss=0.6933, best=0.6932][A
+LSTM-A:   2%|▎         | 5/200 [00:17<11:05,  3.41s/epoch, val_loss=0.6933, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 6/200 train_loss=0.69224 tr_eval=0.69168 val_loss=0.69344 lr=1.00e-03 tr_auc=0.5308 va_auc=0.4993
+
+LSTM-A:   2%|▎         | 5/200 [00:20<11:05,  3.41s/epoch, val_loss=0.6934, best=0.6932][A
+LSTM-A:   3%|▎         | 6/200 [00:20<11:03,  3.42s/epoch, val_loss=0.6934, best=0.6932][AINFO models.lstm_model: [LSTM-A] epoch 7/200 train_loss=0.69226 tr_eval=0.69144 val_loss=0.69351 lr=1.00e-03 tr_auc=0.5321 va_auc=0.4969
+
+LSTM-A:   3%|▎         | 6/200 [00:24<11:03,  3.42s/epoch, val_loss=0.6935, best=0.6932][A
+LSTM-A:   4%|▎         | 7/200 [00:24<11:01,  3.43s/epoch, val_loss=0.6935, best=0.6932][A

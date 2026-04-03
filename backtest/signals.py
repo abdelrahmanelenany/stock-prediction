@@ -46,12 +46,20 @@ def smooth_probabilities(
     if ema_method == 'span':
         if ema_span is None or ema_span <= 0:
             raise ValueError('ema_span must be a positive integer when ema_method="span".')
+    else:
+        # Allow alpha <= 0 as an explicit "no smoothing" mode.
+        if alpha is None or alpha <= 0:
+            alpha = None
+        elif alpha > 1:
+            raise ValueError('alpha must satisfy 0 < alpha <= 1 when ema_method="alpha".')
 
     parts = []
     for ticker, group in preds_df.groupby('Ticker'):
         g = group.sort_values('Date').copy()
         if ema_method == 'span':
             g[smoothed_col] = g[prob_col].ewm(span=ema_span, adjust=False).mean()
+        elif alpha is None:
+            g[smoothed_col] = g[prob_col]
         else:
             g[smoothed_col] = g[prob_col].ewm(alpha=alpha, adjust=False).mean()
         parts.append(g)

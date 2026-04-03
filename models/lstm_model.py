@@ -1255,6 +1255,10 @@ def align_predictions_to_df(probs: np.ndarray, keys: list, df: pd.DataFrame) -> 
     Returns:
         np.array aligned to df rows (NaN where no prediction)
     """
+    # If a model was intentionally skipped (e.g., DEV mode), keep alignment safe.
+    if probs is None or keys is None:
+        return np.full(len(df), np.nan)
+
     prob_map = {
         (pd.Timestamp(date).strftime('%Y-%m-%d'), ticker): float(prob)
         for (date, ticker), prob in zip(keys, probs)

@@ -63,14 +63,17 @@ SECTOR_MAP = {
     'DD': 'Materials', 'ECL': 'Materials',
 }
 
-START_DATE = '1990-01-01'
-END_DATE   = '2015-12-31'
+# ── Development Mode: faster iteration with shorter sequences and larger batches ───
+DEV_MODE = True  # Set False for final thesis run
+
+START_DATE = '2000-01-01'
+END_DATE   = '2024-12-31'
 
 # Walk-forward fold structure
 TRAIN_DAYS = 500   # ~2 years
 VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
 TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
-MAX_FOLDS  = 1     # development cap; set None for full walk-forward run
+MAX_FOLDS  = None     # development cap; set None for full walk-forward run
 
 # Walk-forward: stride between folds (None = roll by one test window)
 WALK_FORWARD_STRIDE = None  # resolved to TEST_DAYS when None
@@ -121,7 +124,7 @@ SECTOR_VOL_EXTRA_WINDOWS = (60,)
 SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
 
 # ── Feature config (10 active features including momentum + Context features) ────────────────
-SEQ_LEN               = 60
+SEQ_LEN               = 20 if DEV_MODE else 60
 
 # Context features flags
 MARKET_FEATURES_ENABLED = True
@@ -216,7 +219,7 @@ BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 # Trading
 K_STOCKS = 10  # Number of long / short positions per day from the 70-stock universe
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
-SIGNAL_SMOOTH_ALPHA = 0.3  # EMA smoothing factor for probabilities (lower = stickier)
+SIGNAL_SMOOTH_ALPHA = 0  # EMA smoothing factor for probabilities (lower = stickier)
 SIGNAL_CONFIDENCE_THRESHOLD = 0  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
@@ -231,7 +234,7 @@ LSTM_A_FEATURES      = LSTM_A_FEATURE_COLS  # 4 features: MACD, RSI, ATR, Return
 LSTM_A_SEQ_LEN       = 60                    # matches LSTM-B for fair comparison
 LSTM_A_OPTIMIZER     = 'adam'                # will be tuned
 LSTM_A_LR            = 0.001                 # will be tuned
-LSTM_A_BATCH         = 128                   # will be tuned
+LSTM_A_BATCH         = 256 if DEV_MODE else 128   # DEV: faster batches
 LSTM_A_MAX_EPOCHS    = 200
 LSTM_A_PATIENCE      = 15
 LSTM_A_VAL_SPLIT     = 0.2
@@ -254,7 +257,7 @@ LSTM_B_HIDDEN        = LSTM_B_HIDDEN_SIZE     # alias for backward compatibility
 LSTM_B_LAYERS        = LSTM_B_NUM_LAYERS
 LSTM_B_OPTIMIZER     = 'adam'
 LSTM_B_LR            = 0.001
-LSTM_B_BATCH         = 128
+LSTM_B_BATCH         = 256 if DEV_MODE else 128   # DEV: faster batches
 LSTM_B_MAX_EPOCHS    = 200
 LSTM_B_PATIENCE      = 15
 LSTM_B_LR_PATIENCE   = 7
@@ -312,6 +315,13 @@ XGB_REG_ALPHA    = 0.1    # L1 regularization
 XGB_REG_LAMBDA   = 1.0    # L2 regularization
 
 RANDOM_SEED = 42
+
+# =============================================================================
+# DEV MODE — Set False for final thesis run only
+# =============================================================================
+DEV_MODE = True  # When True, skips LSTM-A to reduce runtime
+MODELS_DEV  = ['LR', 'RF', 'XGBoost', 'LSTM-B']
+MODELS_FULL = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
 
 # ── Model registry (after refactor) ──────────────────────────────────────────
 MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
