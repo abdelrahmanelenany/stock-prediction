@@ -133,7 +133,7 @@ SECTOR_VOL_EXTRA_WINDOWS = (60,)
 SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
 
 # ── Feature config (10 active features including momentum + Context features) ────────────────
-SEQ_LEN               = 20
+SEQ_LEN               = 30
 
 # Context features flags
 MARKET_FEATURES_ENABLED = True
