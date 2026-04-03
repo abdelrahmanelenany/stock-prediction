@@ -108,6 +108,13 @@ def generate_walk_forward_folds(
         f"(train={'expanding from 0' if mode == 'expanding' else train_days}, "
         f"val={val_days}d, test={test_days}d, total dates={total})"
     )
+
+    # Assertion guard for minimum fold count
+    assert len(folds) >= 8, (
+        f"Only {len(folds)} folds generated. Check TRAIN/VAL/TEST_DAYS vs date range. "
+        f"Need at least 8 folds for statistically meaningful walk-forward evaluation."
+    )
+
     return folds
 
 

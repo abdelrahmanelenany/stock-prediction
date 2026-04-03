@@ -84,7 +84,7 @@ from config import (
 )
 
 TARGET_COL = 'Target'
-CACHE_FEATURES_PATH = 'data/processed/features.csv'
+CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
@@ -147,44 +147,47 @@ def save_all_results(
     """
     os.makedirs(reports_dir, exist_ok=True)
 
+    # Namespace by universe mode
+    prefix = config.UNIVERSE_MODE  # "large_cap" or "small_cap"
+
     # Table T5: Risk-Return Metrics
     pd.DataFrame(results_dict['gross']).to_csv(
-        f'{reports_dir}/table_T5_gross_returns.csv', index=False
+        f'{reports_dir}/{prefix}_table_T5_gross_returns.csv', index=False
     )
     pd.DataFrame(results_dict['net_5']).to_csv(
-        f'{reports_dir}/table_T5_net_returns_5bps.csv', index=False
+        f'{reports_dir}/{prefix}_table_T5_net_returns_5bps.csv', index=False
     )
 
     # Table T8: Classification Metrics
     pd.DataFrame(results_dict['classification']).to_csv(
-        f'{reports_dir}/table_T8_classification_metrics.csv', index=False
+        f'{reports_dir}/{prefix}_table_T8_classification_metrics.csv', index=False
     )
 
     # Table T6: Sub-Period Performance
     if results_dict['subperiod'] is not None:
         results_dict['subperiod'].to_csv(
-            f'{reports_dir}/table_T6_subperiod_performance.csv', index=False
+            f'{reports_dir}/{prefix}_table_T6_subperiod_performance.csv', index=False
         )
 
     # LSTM Tuning Results (Bhandari §3.3 Tables)
     if tuning_results and len(tuning_results) > 0:
         pd.DataFrame(tuning_results).to_csv(
-            f'{reports_dir}/lstm_tuning_results.csv', index=False
+            f'{reports_dir}/{prefix}_lstm_tuning_results.csv', index=False
         )
 
     # Raw daily returns
     daily_returns_dict['gross'].to_csv(
-        f'{reports_dir}/daily_returns_gross.csv', index=False
+        f'{reports_dir}/{prefix}_daily_returns_gross.csv', index=False
     )
     daily_returns_dict['net_5'].to_csv(
-        f'{reports_dir}/daily_returns_net_5bps.csv', index=False
+        f'{reports_dir}/{prefix}_daily_returns_net_5bps.csv', index=False
     )
 
     # Signals
-    signals_dict.to_csv(f'{reports_dir}/signals_all_models.csv', index=False)
+    signals_dict.to_csv(f'{reports_dir}/{prefix}_signals_all_models.csv', index=False)
 
     # Human-readable summary
-    with open(f'{reports_dir}/backtest_summary.txt', 'w') as f:
+    with open(f'{reports_dir}/{prefix}_backtest_summary.txt', 'w') as f:
         f.write(_format_summary(results_dict))
 
     print(f"\nAll results saved to /{reports_dir}/")
@@ -250,11 +253,18 @@ def run_walk_forward_pipeline(
     lstm_a_tuning_enabled = ENABLE_LSTM_TUNING and not lstm_a_dev_mode
 
     print("=" * 60)
+    print("EXPERIMENT CONFIGURATION")
+    print(f"  Universe mode : {config.UNIVERSE_MODE}")
+    print(f"  Tickers       : {config.N_STOCKS} stocks")
+    print(f"  Date range    : {config.START_DATE} → {config.END_DATE}")
+    print(f"  Windows       : {train_days or TRAIN_DAYS}/{VAL_DAYS}/{TEST_DAYS} days")
+    print(f"  Sequence len  : {config.SEQ_LEN} days")
+    print(f"  K (long/short): {K_STOCKS} stocks per side")
+    print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
     print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
     print(f"LSTM-A Tuning: {'ENABLED' if lstm_a_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
-    print(f"Configured tickers: {len(config.TICKERS)}")
     print("=" * 60)
 
     # Ensure run-to-run reproducibility for all stochastic components.
