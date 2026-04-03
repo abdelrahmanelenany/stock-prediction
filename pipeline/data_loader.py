@@ -10,6 +10,7 @@ import os
 # Allow running from project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import TICKERS, START_DATE, END_DATE
+import config
 
 
 def download_and_save() -> pd.DataFrame:
@@ -25,6 +26,8 @@ def download_and_save() -> pd.DataFrame:
         Long-format DataFrame with columns:
         Date, Ticker, Open, High, Low, Close, Volume, Return_1d
     """
+    print(f"Universe mode: {config.UNIVERSE_MODE} | Tickers: {len(TICKERS)} | "
+          f"Date range: {START_DATE} to {END_DATE}")
     print(f"Downloading {len(TICKERS)} tickers from {START_DATE} to {END_DATE}...")
     raw = yf.download(TICKERS, start=START_DATE, end=END_DATE, auto_adjust=True)
     raw.to_csv('data/raw/ohlcv_raw.csv')

@@ -136,7 +136,7 @@ def apply_holding_period_constraint(
 
 def generate_signals(
     predictions_df: pd.DataFrame,
-    k: int = K_STOCKS,
+    k: int = None,
     prob_col: str = None,
     confidence_threshold: float = SIGNAL_CONFIDENCE_THRESHOLD,
     use_cross_sectional_z: bool = SIGNAL_USE_ZSCORE,
@@ -152,7 +152,7 @@ def generate_signals(
         all four probability columns (Prob_LR, Prob_RF, Prob_XGB, Prob_LSTM)
         or a single column specified via `prob_col`.
     k : int
-        Number of long and short positions per day (default K_STOCKS).
+        Number of long and short positions per day (default from config.K_STOCKS).
     prob_col : str or None
         If provided, use this single column as the ranking signal instead
         of computing the 4-model ensemble average. Useful for per-model
@@ -180,6 +180,9 @@ def generate_signals(
         If `return_diagnostics=True`, also returns summary diagnostics about
         requested versus assigned long/short slots.
     """
+    if k is None:
+        k = K_STOCKS
+
     ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
     results = []
     long_slots_requested = 0
