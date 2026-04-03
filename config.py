@@ -1,78 +1,87 @@
 # config.py — Single source of truth for all hyperparameters and constants
 # Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
-# Development universe trimmed to 70 large-cap S&P 500 names to reduce runtime.
-TICKERS = [
-    # Technology (7)
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'ORCL', 'CSCO',
-    # Finance (7)
-    'BRK-B', 'JPM', 'WFC', 'BAC', 'V', 'C', 'MA',
-    # Healthcare (7)
-    'JNJ', 'PFE', 'UNH', 'MRK', 'ABBV', 'AMGN', 'LLY',
-    # Consumer Discretionary (7)
-    'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG',
-    # Consumer Staples (6)
-    'WMT', 'PG', 'KO', 'PEP', 'COST', 'PM',
-    # Communication Services (7)
-    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR', 'FOXA',  # added for 70-stock target
-    # Energy (6)
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC',
-    # Industrials (6)
-    'GE', 'UPS', 'HON', 'BA', 'CAT', 'UNP',
-    # Utilities (6)
-    'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC',  # added for 70-stock target
-    # Real Estate (6)
-    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O',  # added for 70-stock target
-    # Materials (5)
-    'LIN', 'APD', 'SHW', 'DD', 'ECL',  # added for 70-stock target
-]
+# Universe-mode setup supports large-cap vs relative small-cap S&P 500 experiments.
+# =============================================================================
+# 0. UNIVERSE MODE — toggle between large-cap and small-cap experiments
+# =============================================================================
+UNIVERSE_MODE = "small_cap"   # Options: "large_cap" | "small_cap"
 
-SECTOR_MAP = {
-    # Technology
-    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech',
-    'META': 'Tech', 'ORCL': 'Tech', 'CSCO': 'Tech',
-    # Finance
-    'BRK-B': 'Finance', 'JPM': 'Finance', 'WFC': 'Finance', 'BAC': 'Finance',
-    'V': 'Finance', 'C': 'Finance', 'MA': 'Finance',
-    # Healthcare
-    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'UNH': 'Healthcare',
-    'MRK': 'Healthcare', 'ABBV': 'Healthcare', 'AMGN': 'Healthcare',
-    'LLY': 'Healthcare',
-    # Consumer Discretionary
-    'HD': 'Consumer', 'MCD': 'Consumer', 'NKE': 'Consumer', 'SBUX': 'Consumer',
-    'LOW': 'Consumer', 'TJX': 'Consumer', 'BKNG': 'Consumer',
-    # Consumer Staples
-    'WMT': 'Staples', 'PG': 'Staples', 'KO': 'Staples', 'PEP': 'Staples',
-    'COST': 'Staples', 'PM': 'Staples',
-    # Communication Services
-    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm',
-    'T': 'Comm', 'CHTR': 'Comm', 'FOXA': 'Comm',
-    # Energy
-    'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy', 'SLB': 'Energy',
-    'EOG': 'Energy', 'MPC': 'Energy',
-    # Industrials
-    'GE': 'Industrial', 'UPS': 'Industrial', 'HON': 'Industrial',
-    'BA': 'Industrial', 'CAT': 'Industrial', 'UNP': 'Industrial',
-    # Utilities
-    'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities', 'D': 'Utilities',
-    'AEP': 'Utilities', 'EXC': 'Utilities',
-    # Real Estate
-    'AMT': 'REIT', 'PLD': 'REIT', 'CCI': 'REIT', 'EQIX': 'REIT',
-    'SPG': 'REIT', 'O': 'REIT',
-    # Materials
-    'LIN': 'Materials', 'APD': 'Materials', 'SHW': 'Materials',
-    'DD': 'Materials', 'ECL': 'Materials',
+# Large-cap: 30 S&P 500 mega-caps
+LARGE_CAP_TICKERS = [
+    # Technology (8)
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AVGO',
+    # Finance (5)
+    'JPM', 'V', 'MA', 'BRK-B', 'GS',
+    # Healthcare (5)
+    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK',
+    # Consumer Discretionary + Staples (4)
+    'HD', 'MCD', 'KO', 'WMT',
+    # Energy (2)
+    'XOM', 'CVX',
+    # Industrials (2)
+    'CAT', 'HON',
+    # Communication (2)
+    'DIS', 'TMUS',
+    # Utilities + Materials (2)
+    'NEE', 'LIN',
+]  # Total: 30
+
+# Small-cap: 30 TRUE small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
+# Market cap range: ~300M – 5B USD (actual small-cap territory)
+# Better reflects size-factor effects vs S&P 500 "pseudo small caps"
+
+SMALL_CAP_TICKERS = [
+    # Technology / Growth
+    'SMCI', 'FSLY', 'AI', 'PLUG', 'RUN', 'ARRY',
+    
+    # Healthcare / Biotech
+    'NVAX', 'ICPT', 'SRPT', 'BLUE', 'EXEL', 'IONS',
+    
+    # Consumer / Retail
+    'GME', 'BOOT', 'CROX', 'SHOO', 'CAL', 'MOV',
+    
+    # Industrials / Manufacturing
+    'AA', 'CLF', 'X', 'ATI', 'WCC', 'LPX',
+    
+    # Financials / REITs
+    'FHN', 'ZION', 'CMA', 'PACW', 'NYCB', 'STWD'
+]  # Total: 30
+
+# Active ticker list — set by UNIVERSE_MODE
+TICKERS = LARGE_CAP_TICKERS if UNIVERSE_MODE == "large_cap" else SMALL_CAP_TICKERS
+N_STOCKS = len(TICKERS)
+
+LARGE_CAP_SECTOR_MAP = {
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'NVDA': 'Tech', 'GOOGL': 'Tech',
+    'AMZN': 'Tech', 'META': 'Tech', 'TSLA': 'Tech', 'AVGO': 'Tech',
+    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance',
+    'JNJ': 'Healthcare', 'LLY': 'Healthcare', 'UNH': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare',
+    'HD': 'Consumer', 'MCD': 'Consumer', 'KO': 'Staples', 'WMT': 'Staples',
+    'XOM': 'Energy', 'CVX': 'Energy',
+    'CAT': 'Industrial', 'HON': 'Industrial',
+    'DIS': 'Comm', 'TMUS': 'Comm',
+    'NEE': 'Utilities', 'LIN': 'Materials',
 }
+
+SMALL_CAP_SECTOR_MAP = {
+    'HAS': 'Consumer', 'MHK': 'Consumer', 'PVH': 'Consumer', 'RL': 'Consumer', 'TPR': 'Consumer',
+    'DVA': 'Healthcare', 'BEN': 'Finance', 'IVZ': 'Finance', 'NCLH': 'Consumer', 'CCL': 'Consumer',
+    'FMC': 'Materials', 'AES': 'Utilities', 'SEE': 'Materials', 'AIZ': 'Finance', 'PARA': 'Comm',
+    'WHR': 'Consumer', 'MOS': 'Materials', 'NWL': 'Consumer', 'HSIC': 'Healthcare', 'FRT': 'REIT',
+}
+
+SECTOR_MAP = LARGE_CAP_SECTOR_MAP if UNIVERSE_MODE == "large_cap" else SMALL_CAP_SECTOR_MAP
 
 # ── Development Mode: faster iteration with shorter sequences and larger batches ───
 DEV_MODE = True  # Set False for final thesis run
 
-START_DATE = '2000-01-01'
+START_DATE = '2019-01-01'
 END_DATE   = '2024-12-31'
 
 # Walk-forward fold structure
-TRAIN_DAYS = 500   # ~2 years
-VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
-TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
+TRAIN_DAYS = 252   # 1 trading year
+VAL_DAYS   = 63    # 1 quarter
+TEST_DAYS  = 63    # 1 quarter
 MAX_FOLDS  = None     # development cap; set None for full walk-forward run
 
 # Walk-forward: stride between folds (None = roll by one test window)
@@ -124,7 +133,7 @@ SECTOR_VOL_EXTRA_WINDOWS = (60,)
 SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
 
 # ── Feature config (10 active features including momentum + Context features) ────────────────
-SEQ_LEN               = 20 if DEV_MODE else 60
+SEQ_LEN               = 20
 
 # Context features flags
 MARKET_FEATURES_ENABLED = True
@@ -217,12 +226,12 @@ if SECTOR_FEATURES_ENABLED:
 BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 
 # Trading
-K_STOCKS = 10  # Number of long / short positions per day from the 70-stock universe
+K_STOCKS = 5   # Long top-5, short bottom-5 per day
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
-SIGNAL_SMOOTH_ALPHA = 0  # EMA smoothing factor for probabilities (lower = stickier)
+SIGNAL_SMOOTH_ALPHA = 0
 SIGNAL_CONFIDENCE_THRESHOLD = 0  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
-MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
+MIN_HOLDING_DAYS = 5
 
 # Execution semantics (see backtest/portfolio.py): features at date t use data through t;
 # signals rank at t; portfolio earns Return_NextDay (close t to close t+1).
@@ -231,7 +240,7 @@ MIN_HOLDING_DAYS = 5  # Enforce minimum holding period to reduce turnover
 # Architecture is determined by hyperparameter tuning (Section 1 / 7.4)
 LSTM_A_DEV_MODE     = True                  # Set False for final thesis run only
 LSTM_A_FEATURES      = LSTM_A_FEATURE_COLS  # 4 features: MACD, RSI, ATR, Return_1d
-LSTM_A_SEQ_LEN       = 60                    # matches LSTM-B for fair comparison
+LSTM_A_SEQ_LEN       = SEQ_LEN
 LSTM_A_OPTIMIZER     = 'adam'                # will be tuned
 LSTM_A_LR            = 0.001                 # will be tuned
 LSTM_A_BATCH         = 256 if DEV_MODE else 128   # DEV: faster batches
@@ -249,7 +258,7 @@ LSTM_A_ARCH_GRID = {
 
 # ── LSTM-B: Extended ablation — curated 6-feature set (fixed architecture) ────
 LSTM_B_FEATURES      = LSTM_B_FEATURE_COLS
-LSTM_B_SEQ_LEN       = 60
+LSTM_B_SEQ_LEN       = SEQ_LEN
 LSTM_B_HIDDEN_SIZE   = 64                     # fixed architecture for LSTM-B
 LSTM_B_NUM_LAYERS    = 2
 LSTM_B_DROPOUT       = 0.2

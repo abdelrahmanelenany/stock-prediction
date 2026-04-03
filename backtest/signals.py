@@ -136,7 +136,7 @@ def apply_holding_period_constraint(
 
 def generate_signals(
     predictions_df: pd.DataFrame,
-    k: int = K_STOCKS,
+    k: int | None = None,
     prob_col: str = None,
     confidence_threshold: float = SIGNAL_CONFIDENCE_THRESHOLD,
     use_cross_sectional_z: bool = SIGNAL_USE_ZSCORE,
@@ -181,6 +181,10 @@ def generate_signals(
         requested versus assigned long/short slots.
     """
     ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
+    if k is None:
+        from config import K_STOCKS as CFG_K_STOCKS
+        k = CFG_K_STOCKS
+
     results = []
     long_slots_requested = 0
     short_slots_requested = 0
@@ -327,9 +331,10 @@ def compute_turnover_and_holding_stats(
 if __name__ == '__main__':
     # Quick demo with synthetic data to verify signal assignment
     import numpy as np
+    import config
     np.random.seed(42)
     dates = pd.date_range('2022-01-03', periods=5, freq='B')
-    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B', 'JPM', 'V']
+    tickers = config.TICKERS[:min(10, len(config.TICKERS))]
     rows = []
     for d in dates:
         for t in tickers:

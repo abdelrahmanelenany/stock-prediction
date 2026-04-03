@@ -598,7 +598,7 @@ def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
       1. Compute 8 technical features per ticker (from RAW Close prices)
       2. Compute SectorRelReturn cross-sectional feature
       3. Drops rows with any NaN in feature columns
-      4. Saves to data/processed/features.csv
+    4. Saves to data/processed/features_{UNIVERSE_MODE}.csv
       
     NOTE: Wavelet denoising is intentionally NOT applied here to prevent
     look-ahead bias. Denoising must be done per fold inside the walk-forward
@@ -632,8 +632,9 @@ def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
           f"(expected: ~26 per ticker for MACD warmup)")
 
     # Step 4 — Save
-    result.to_csv('data/processed/features.csv', index=False)
-    print(f"\nSaved {len(result)} rows to data/processed/features.csv")
+    features_cache = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
+    result.to_csv(features_cache, index=False)
+    print(f"\nSaved {len(result)} rows to {features_cache}")
     print(f"Feature columns ({len(FEATURE_COLS)}): {FEATURE_COLS}")
     print(f"Date range: {result['Date'].min()} -> {result['Date'].max()}")
     print(f"Tickers: {len(result['Ticker'].unique())}")

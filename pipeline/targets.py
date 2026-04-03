@@ -10,8 +10,11 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+import config
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+FEATURES_CACHE = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 
 def create_targets(data: pd.DataFrame, return_col: str = 'Return_1d') -> pd.DataFrame:
@@ -61,7 +64,7 @@ def create_targets(data: pd.DataFrame, return_col: str = 'Return_1d') -> pd.Data
 
 
 if __name__ == '__main__':
-    data = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
+    data = pd.read_csv(FEATURES_CACHE, parse_dates=['Date'])
     result = create_targets(data)
 
     # Quick sanity: per-ticker class balance
@@ -69,5 +72,5 @@ if __name__ == '__main__':
     print(result.groupby('Ticker')['Target'].mean().round(3))
 
     # Save augmented feature+target file
-    result.to_csv('data/processed/features.csv', index=False)
-    print("\nUpdated data/processed/features.csv with Target and Return_NextDay columns.")
+    result.to_csv(FEATURES_CACHE, index=False)
+    print(f"\nUpdated {FEATURES_CACHE} with Target and Return_NextDay columns.")

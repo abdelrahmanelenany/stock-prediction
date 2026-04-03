@@ -10,15 +10,16 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from config import BASELINE_FEATURE_COLS, TARGET_COL, TRAIN_DAYS, VAL_DAYS, TEST_DAYS, K_STOCKS, SIGNAL_SMOOTH_ALPHA
+    from config import BASELINE_FEATURE_COLS, TARGET_COL, TRAIN_DAYS, VAL_DAYS, TEST_DAYS, K_STOCKS, SIGNAL_SMOOTH_ALPHA, UNIVERSE_MODE
 except ImportError:
     BASELINE_FEATURE_COLS = ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn']
     TARGET_COL = 'Target'
-    TRAIN_DAYS = 500
-    VAL_DAYS = 125
-    TEST_DAYS = 125
-    K_STOCKS = 10
+    TRAIN_DAYS = 252
+    VAL_DAYS = 63
+    TEST_DAYS = 63
+    K_STOCKS = 5
     SIGNAL_SMOOTH_ALPHA = 0.3
+    UNIVERSE_MODE = 'large_cap'
 
 try:
     from pipeline.walk_forward import generate_walk_forward_folds
@@ -36,7 +37,7 @@ def run_diagnostics():
     print("="*60)
     
     # Load data
-    data_path = 'data/processed/features.csv'
+    data_path = f'data/processed/features_{UNIVERSE_MODE}.csv'
     if not os.path.exists(data_path):
         print(f"Error: Could not find {data_path}")
         return
@@ -298,8 +299,9 @@ def run_diagnostics():
 
 
 def run_fold_analysis():
-    print("Loading data from data/processed/features.csv...")
-    df = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
+    data_path = f'data/processed/features_{UNIVERSE_MODE}.csv'
+    print(f"Loading data from {data_path}...")
+    df = pd.read_csv(data_path, parse_dates=['Date'])
     df = df.sort_values('Date').reset_index(drop=True)
     
     dates = sorted(df['Date'].unique())
@@ -444,7 +446,7 @@ def run_signal_direction_check():
     print("="*60)
     
     # Load data
-    data_path = 'data/processed/features.csv'
+    data_path = f'data/processed/features_{UNIVERSE_MODE}.csv'
     if not os.path.exists(data_path):
         print(f"Error: Could not find {data_path}")
         return

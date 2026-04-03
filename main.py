@@ -84,7 +84,7 @@ from config import (
 )
 
 TARGET_COL = 'Target'
-CACHE_FEATURES_PATH = 'data/processed/features.csv'
+CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
 ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
@@ -146,45 +146,46 @@ def save_all_results(
         reports_dir: output directory path
     """
     os.makedirs(reports_dir, exist_ok=True)
+    prefix = config.UNIVERSE_MODE
 
     # Table T5: Risk-Return Metrics
     pd.DataFrame(results_dict['gross']).to_csv(
-        f'{reports_dir}/table_T5_gross_returns.csv', index=False
+        f'{reports_dir}/{prefix}_table_T5_gross_returns.csv', index=False
     )
     pd.DataFrame(results_dict['net_5']).to_csv(
-        f'{reports_dir}/table_T5_net_returns_5bps.csv', index=False
+        f'{reports_dir}/{prefix}_table_T5_net_returns_5bps.csv', index=False
     )
 
     # Table T8: Classification Metrics
     pd.DataFrame(results_dict['classification']).to_csv(
-        f'{reports_dir}/table_T8_classification_metrics.csv', index=False
+        f'{reports_dir}/{prefix}_table_T8_classification_metrics.csv', index=False
     )
 
     # Table T6: Sub-Period Performance
     if results_dict['subperiod'] is not None:
         results_dict['subperiod'].to_csv(
-            f'{reports_dir}/table_T6_subperiod_performance.csv', index=False
+            f'{reports_dir}/{prefix}_table_T6_subperiod_performance.csv', index=False
         )
 
     # LSTM Tuning Results (Bhandari §3.3 Tables)
     if tuning_results and len(tuning_results) > 0:
         pd.DataFrame(tuning_results).to_csv(
-            f'{reports_dir}/lstm_tuning_results.csv', index=False
+            f'{reports_dir}/{prefix}_lstm_tuning_results.csv', index=False
         )
 
     # Raw daily returns
     daily_returns_dict['gross'].to_csv(
-        f'{reports_dir}/daily_returns_gross.csv', index=False
+        f'{reports_dir}/{prefix}_daily_returns_gross.csv', index=False
     )
     daily_returns_dict['net_5'].to_csv(
-        f'{reports_dir}/daily_returns_net_5bps.csv', index=False
+        f'{reports_dir}/{prefix}_daily_returns_net_5bps.csv', index=False
     )
 
     # Signals
-    signals_dict.to_csv(f'{reports_dir}/signals_all_models.csv', index=False)
+    signals_dict.to_csv(f'{reports_dir}/{prefix}_signals_all_models.csv', index=False)
 
     # Human-readable summary
-    with open(f'{reports_dir}/backtest_summary.txt', 'w') as f:
+    with open(f'{reports_dir}/{prefix}_backtest_summary.txt', 'w') as f:
         f.write(_format_summary(results_dict))
 
     print(f"\nAll results saved to /{reports_dir}/")
@@ -239,7 +240,8 @@ def run_walk_forward_pipeline(
     Parameters
     ----------
     load_cached : bool
-        If True (default), load data from data/processed/features.csv instead
+        If True (default), load data from the universe-specific cache
+        data/processed/features_{UNIVERSE_MODE}.csv instead
         of re-downloading and recomputing. Set False to run from scratch.
     train_days : int, optional
         Override config TRAIN_DAYS for walk-forward train window length.
@@ -249,6 +251,14 @@ def run_walk_forward_pipeline(
     lstm_a_dev_mode = getattr(config, 'LSTM_A_DEV_MODE', False)
     lstm_a_tuning_enabled = ENABLE_LSTM_TUNING and not lstm_a_dev_mode
 
+    print("=" * 60)
+    print("EXPERIMENT CONFIGURATION")
+    print(f"  Universe mode : {config.UNIVERSE_MODE}")
+    print(f"  Tickers       : {config.N_STOCKS} stocks")
+    print(f"  Date range    : {config.START_DATE} -> {config.END_DATE}")
+    print(f"  Windows       : {config.TRAIN_DAYS}/{config.VAL_DAYS}/{config.TEST_DAYS} days")
+    print(f"  Sequence len  : {config.SEQ_LEN} days")
+    print(f"  K (long/short): {config.K_STOCKS} stocks per side")
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
     print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
@@ -262,7 +272,7 @@ def run_walk_forward_pipeline(
 
     # ── Steps 1-3: Data ─────────────────────────────────────────────────────
     if load_cached:
-        print('\nLoading cached features.csv ...')
+        print(f'\nLoading cached {os.path.basename(CACHE_FEATURES_PATH)} ...')
         data = pd.read_csv(CACHE_FEATURES_PATH, parse_dates=['Date'])
         print(f'Loaded {len(data)} rows, {len(data.columns)} columns.')
 
@@ -278,7 +288,7 @@ def run_walk_forward_pipeline(
                 print(f'Repaired and saved cache to {CACHE_FEATURES_PATH}')
             else:
                 raise ValueError(
-                    'Cached features.csv is missing target columns and lacks the columns '
+                    f'Cached {os.path.basename(CACHE_FEATURES_PATH)} is missing target columns and lacks the columns '
                     "required to rebuild them ('Date', 'Ticker', 'Return_1d'). "
                     'Run once with load_cached=False to regenerate cache.'
                 )
@@ -294,7 +304,7 @@ def run_walk_forward_pipeline(
     required = FEATURE_COLS + [TARGET_COL, 'Return_NextDay', 'Date', 'Ticker']
     missing = [c for c in required if c not in data.columns]
     if missing:
-        raise ValueError(f'Missing columns in features.csv: {missing}')
+        raise ValueError(f'Missing columns in {os.path.basename(CACHE_FEATURES_PATH)}: {missing}')
 
     # Verify LSTM-A features are available (4 features)
     lstm_a_missing = [c for c in LSTM_A_FEATURES if c not in data.columns]
@@ -843,7 +853,7 @@ def run_walk_forward_pipeline(
     signals_df = pd.concat(all_signals).reset_index(drop=True) if all_signals else pd.DataFrame()
 
     # Save full predictions so Baseline/LSTM runs can be stitched together later
-    full_preds_path = os.path.join(reports_dir, 'full_predictions.csv')
+    full_preds_path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_full_predictions.csv')
     full_preds.to_csv(full_preds_path, index=False)
     print(f'  Saved raw probabilities to {full_preds_path}')
 
@@ -859,7 +869,7 @@ def run_walk_forward_pipeline(
     )
 
     if ablation_rows:
-        ab_path = os.path.join(reports_dir, 'signal_ablation_summary.csv')
+        ab_path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_signal_ablation_summary.csv')
         pd.DataFrame(ablation_rows).to_csv(ab_path, index=False)
         print(f'Signal ablation summary: {ab_path}')
 

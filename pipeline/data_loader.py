@@ -6,10 +6,13 @@ import yfinance as yf
 import pandas as pd
 import sys
 import os
+import config
 
 # Allow running from project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import TICKERS, START_DATE, END_DATE
+
+FEATURES_CACHE = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 
 def download_and_save() -> pd.DataFrame:
@@ -27,6 +30,10 @@ def download_and_save() -> pd.DataFrame:
     """
     print(f"Downloading {len(TICKERS)} tickers from {START_DATE} to {END_DATE}...")
     raw = yf.download(TICKERS, start=START_DATE, end=END_DATE, auto_adjust=True)
+    print(
+        f"Universe mode: {config.UNIVERSE_MODE} | Tickers: {len(TICKERS)} | "
+        f"Date range: {START_DATE} to {END_DATE}"
+    )
     raw.to_csv('data/raw/ohlcv_raw.csv')
     print(f"Raw data saved: {raw.shape[0]} rows x {raw.shape[1]} columns")
 

@@ -3,8 +3,8 @@ pipeline/walk_forward.py
 Step 4: Walk-forward fold generator for time-series cross-validation.
 
 Fold structure (rolls forward by one test period each time):
-  |--- Train 500 ---|--- Val 125 ---|--- Test 125 ---|
-                    |--- Train 500 ---|--- Val 125 ---|--- Test 125 ---|
+    |--- Train 252 ---|--- Val 63 ---|--- Test 63 ---|
+                                        |--- Train 252 ---|--- Val 63 ---|--- Test 63 ---|
                                      ...
 
 Modes:
@@ -16,6 +16,8 @@ from __future__ import annotations
 import sys
 import os
 from typing import Literal
+import pandas as pd
+import config
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import TRAIN_DAYS, VAL_DAYS, TEST_DAYS, WALK_FORWARD_STRIDE, TRAIN_WINDOW_MODE
@@ -108,6 +110,10 @@ def generate_walk_forward_folds(
         f"(train={'expanding from 0' if mode == 'expanding' else train_days}, "
         f"val={val_days}d, test={test_days}d, total dates={total})"
     )
+    assert len(folds) >= 8, (
+        f"Only {len(folds)} folds generated. Check TRAIN/VAL/TEST_DAYS vs date range. "
+        f"Need at least 8 folds for statistically meaningful walk-forward evaluation."
+    )
     return folds
 
 
@@ -131,7 +137,8 @@ def print_fold_summary(folds: list[dict]) -> None:
 
 
 if __name__ == '__main__':
-    data = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
+    features_cache = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
+    data = pd.read_csv(features_cache, parse_dates=['Date'])
     dates = sorted(data['Date'].unique())
     folds = generate_walk_forward_folds(dates)
     print()

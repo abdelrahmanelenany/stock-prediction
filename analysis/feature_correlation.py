@@ -134,7 +134,7 @@ def print_config_snippet(reduced_features: list):
 
 if __name__ == "__main__":
     # Load features data
-    features_path = 'data/processed/features.csv'
+    features_path = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
     if not os.path.exists(features_path):
         print(f"Error: {features_path} not found.")

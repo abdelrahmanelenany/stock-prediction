@@ -111,11 +111,12 @@ def compute_portfolio_returns(
 if __name__ == '__main__':
     # Smoke test with synthetic signals
     import numpy as np
+    import config
     from backtest.signals import generate_signals
 
     np.random.seed(42)
     dates   = pd.date_range('2022-01-03', periods=10, freq='B')
-    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B', 'JPM', 'V']
+    tickers = config.TICKERS[:min(10, len(config.TICKERS))]
 
     rows = []
     for d in dates:
