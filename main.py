@@ -87,8 +87,7 @@ TARGET_COL = 'Target'
 CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
-ENABLE_LSTM_TUNING = False  # Set True to run Bhandari §3.3 hyperparameter tuning
-                            # (computationally expensive — ~2-3x slower per fold)
+ENABLE_LSTM_A_TUNING = False  # Keep False in dev unless explicitly needed.
 
 RUN_BASELINES = True        # Set False to skip LR, RF, XGB
 RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
@@ -249,7 +248,9 @@ def run_walk_forward_pipeline(
         Directory for tables and fold reports.
     """
     lstm_a_dev_mode = getattr(config, 'LSTM_A_DEV_MODE', False)
-    lstm_a_tuning_enabled = ENABLE_LSTM_TUNING and not lstm_a_dev_mode
+    lstm_a_tuning_enabled = ENABLE_LSTM_A_TUNING and not lstm_a_dev_mode
+    lstm_b_tuning_enabled = bool(getattr(config, 'LSTM_B_ENABLE_TUNING', False))
+    lstm_b_tune_once = bool(getattr(config, 'LSTM_B_TUNE_ON_FIRST_FOLD_ONLY', True))
 
     print("=" * 60)
     print("EXPERIMENT CONFIGURATION")
@@ -263,6 +264,7 @@ def run_walk_forward_pipeline(
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
     print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
     print(f"LSTM-A Tuning: {'ENABLED' if lstm_a_tuning_enabled else 'DISABLED'}")
+    print(f"LSTM-B Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
     print(f"Configured tickers: {len(config.TICKERS)}")
     print("=" * 60)
@@ -339,9 +341,42 @@ def run_walk_forward_pipeline(
 
     ablation_rows: list[dict] = []
 
+    def _score_lstm_b_candidate_on_val(preds_val: pd.DataFrame) -> tuple[float, float]:
+        """
+        Score a candidate on validation TRADING performance (not only AUC).
+        Returns (val_sharpe_net, val_annual_return_net_pct).
+        """
+        valid = preds_val.dropna(subset=['Prob_LSTM_B']).copy()
+        if len(valid) == 0:
+            return float('-inf'), float('-inf')
+
+        smoothed = smooth_probabilities(
+            valid,
+            'Prob_LSTM_B',
+            alpha=SIGNAL_SMOOTH_ALPHA,
+            ema_method=SIGNAL_EMA_METHOD,
+            ema_span=SIGNAL_EMA_SPAN,
+        )
+        sig_df, _ = generate_signals(
+            smoothed,
+            k=K_STOCKS,
+            prob_col='Prob_LSTM_B_Smooth',
+            return_diagnostics=True,
+        )
+        sig_df = apply_holding_period_constraint(sig_df, min_hold_days=MIN_HOLDING_DAYS)
+        port_val = compute_portfolio_returns(
+            sig_df,
+            tc_bps=TC_BPS,
+            k=K_STOCKS,
+            slippage_bps=SLIPPAGE_BPS,
+        )
+        met_val = compute_metrics(port_val['Net_Return'])
+        return float(met_val['Sharpe Ratio']), float(met_val['Annualized Return (%)'])
+
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
     tuning_results = []  # Store tuning results for thesis reporting
+    best_hp_b_global = None  # dict for tuned params or string 'DEFAULT'
 
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"=" * 60}')
@@ -549,7 +584,7 @@ def run_walk_forward_pipeline(
                 print('  [LSTM-A]  skipped (DEV_MODE=True)')
                 probs_a = None
 
-            # ── LSTM-B: Extended (6 features, fixed architecture) ────────────────
+            # ── LSTM-B: Extended feature LSTM with optional tuning ───────────────
             t0 = time.time()
             print('  [LSTM-B]  building sequences & training...')
 
@@ -559,13 +594,135 @@ def run_walk_forward_pipeline(
 
             print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
 
-            model_b = train_lstm_b(
-                X_tr_b, y_tr_b,
-                X_val_b, y_val_b,
-                device,
-                seed=fold_seed_base + 30,
-                fold_idx=fold['fold'],
+            best_hp_b = None
+            should_tune_b = lstm_b_tuning_enabled and (
+                (best_hp_b_global is None) or (not lstm_b_tune_once)
             )
+            if should_tune_b:
+                print('    [LSTM-B Tuning] Running Phase 1 + Phase 2...')
+                tuned_hp_b = tune_lstm_hyperparams(
+                    X_tr_b, y_tr_b,
+                    X_val_b, y_val_b,
+                    input_size=len(LSTM_B_FEATURES),
+                    device=device,
+                    arch_grid=config.LSTM_B_ARCH_GRID,
+                    train_grid=config.LSTM_B_HYPERPARAM_GRID,
+                    tune_replicates=config.LSTM_B_TUNE_REPLICATES,
+                    tune_patience=config.LSTM_B_TUNE_PATIENCE,
+                    tune_max_epochs=config.LSTM_B_TUNE_MAX_EPOCHS,
+                    seed_hidden=config.LSTM_B_HIDDEN_SIZE,
+                    seed_layers=config.LSTM_B_NUM_LAYERS,
+                    seed_dropout=config.LSTM_B_DROPOUT,
+                    seed=fold_seed_base + 25,
+                )
+
+                # Return-aware guardrail: compare tuned-vs-default on val trading metrics.
+                candidate_hps = [
+                    ('default', None),
+                    ('tuned', tuned_hp_b),
+                ]
+                candidate_scores = []
+
+                for cand_name, cand_hp in candidate_hps:
+                    if cand_hp is None:
+                        model_b_cand = train_lstm_b(
+                            X_tr_b, y_tr_b,
+                            X_val_b, y_val_b,
+                            device,
+                            seed=fold_seed_base + 28,
+                            fold_idx=fold['fold'],
+                        )
+                    else:
+                        model_b_cand = train_lstm_b(
+                            X_tr_b, y_tr_b,
+                            X_val_b, y_val_b,
+                            device,
+                            seed=fold_seed_base + 28,
+                            fold_idx=fold['fold'],
+                            optimizer_name=cand_hp['optimizer'],
+                            learning_rate=cand_hp['lr'],
+                            batch_size=cand_hp['batch_size'],
+                            hidden_size=cand_hp['hidden_size'],
+                            num_layers=cand_hp['num_layers'],
+                            dropout=cand_hp['dropout'],
+                        )
+
+                    probs_val_b = predict_lstm(model_b_cand, X_val_b, device)
+                    pred_val_b = df_v.copy().reset_index(drop=True)
+                    pred_val_b['Prob_LSTM_B'] = align_predictions_to_df(
+                        probs_val_b, keys_val_b, df_v
+                    )
+                    val_sharpe_b, val_ann_ret_b = _score_lstm_b_candidate_on_val(pred_val_b)
+                    candidate_scores.append({
+                        'name': cand_name,
+                        'hp': cand_hp,
+                        'val_sharpe_net': val_sharpe_b,
+                        'val_ann_ret_net_pct': val_ann_ret_b,
+                    })
+
+                    del model_b_cand
+                    if torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
+
+                candidate_scores = sorted(
+                    candidate_scores,
+                    key=lambda x: (x['val_sharpe_net'], x['val_ann_ret_net_pct']),
+                    reverse=True,
+                )
+                selected = candidate_scores[0]
+                best_hp_b = selected['hp']
+
+                print(
+                    '    [LSTM-B Tuning] Candidate scores: '
+                    + ', '.join(
+                        f"{c['name']}(Sharpe={c['val_sharpe_net']:.3f},AnnRet={c['val_ann_ret_net_pct']:.2f}%)"
+                        for c in candidate_scores
+                    )
+                )
+                if selected['name'] == 'default':
+                    print('    [LSTM-B Tuning] Tuned candidate underperformed on val returns; using default.')
+
+                tuning_results.append({
+                    'fold': fold['fold'],
+                    'model': 'LSTM-B',
+                    'selection_basis': 'val_net_sharpe_then_annret',
+                    'selected_candidate': selected['name'],
+                    'val_sharpe_selected': selected['val_sharpe_net'],
+                    'val_ann_ret_selected': selected['val_ann_ret_net_pct'],
+                    **(tuned_hp_b if tuned_hp_b is not None else {}),
+                })
+                print(f'    [LSTM-B Tuning] Selected params: {best_hp_b}')
+                if lstm_b_tune_once:
+                    best_hp_b_global = best_hp_b if best_hp_b is not None else 'DEFAULT'
+            elif best_hp_b_global is not None:
+                if best_hp_b_global == 'DEFAULT':
+                    best_hp_b = None
+                else:
+                    best_hp_b = best_hp_b_global
+                print(f'    [LSTM-B Tuning] Reusing tuned params: {best_hp_b}')
+
+            if best_hp_b is not None:
+                model_b = train_lstm_b(
+                    X_tr_b, y_tr_b,
+                    X_val_b, y_val_b,
+                    device,
+                    seed=fold_seed_base + 30,
+                    fold_idx=fold['fold'],
+                    optimizer_name=best_hp_b['optimizer'],
+                    learning_rate=best_hp_b['lr'],
+                    batch_size=best_hp_b['batch_size'],
+                    hidden_size=best_hp_b['hidden_size'],
+                    num_layers=best_hp_b['num_layers'],
+                    dropout=best_hp_b['dropout'],
+                )
+            else:
+                model_b = train_lstm_b(
+                    X_tr_b, y_tr_b,
+                    X_val_b, y_val_b,
+                    device,
+                    seed=fold_seed_base + 30,
+                    fold_idx=fold['fold'],
+                )
             print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
 
             # LSTM-B inference

@@ -73,12 +73,14 @@ def _run_tuning_replicates(
     X_train, y_train, X_val, y_val, device,
     opt_name, lr, bs, input_size, hidden_size, num_layers, dropout,
     max_epochs, patience, seed,
+    n_replicates=None,
 ):
     """
     Run cfg.LSTM_TUNE_REPLICATES independent training runs for one hyperparameter
     combination. Returns a list of validation AUC scores (one per replicate).
     """
-    n_replicates = config.LSTM_TUNE_REPLICATES
+    if n_replicates is None:
+        n_replicates = config.LSTM_TUNE_REPLICATES
     auc_scores = []
 
     train_ds = TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
@@ -150,6 +152,10 @@ def tune_lstm_hyperparams(
     X_train, y_train, X_val, y_val,
     input_size, device,
     arch_grid=None,
+    train_grid=None,
+    tune_replicates=None,
+    tune_patience=None,
+    tune_max_epochs=None,
     seed_hidden=64, seed_layers=2, seed_dropout=0.2,
     seed=None,
 ):
@@ -193,7 +199,10 @@ def tune_lstm_hyperparams(
         seed = config.RANDOM_SEED
 
     # ── Phase 1: tune training hyperparameters ────────────────────────────────
-    grid = config.LSTM_HYPERPARAM_GRID
+    grid = train_grid if train_grid is not None else config.LSTM_HYPERPARAM_GRID
+    replicates = tune_replicates if tune_replicates is not None else config.LSTM_TUNE_REPLICATES
+    max_epochs = tune_max_epochs if tune_max_epochs is not None else config.LSTM_TUNE_MAX_EPOCHS
+    patience = tune_patience if tune_patience is not None else config.LSTM_TUNE_PATIENCE
     combos = list(itertools.product(
         grid["optimizer"], grid["learning_rate"], grid["batch_size"]
     ))
@@ -208,8 +217,8 @@ def tune_lstm_hyperparams(
         p1_layers = seed_layers
         p1_drop = seed_dropout
 
-    print(f"[LSTM Tuning - Phase 1] {len(combos)} training combos x "
-          f"{config.LSTM_TUNE_REPLICATES} replicates")
+        print(f"[LSTM Tuning - Phase 1] {len(combos)} training combos x "
+            f"{replicates} replicates")
 
     phase1_results = []
     for opt_name, lr, bs in combos:
@@ -217,9 +226,10 @@ def tune_lstm_hyperparams(
             X_train, y_train, X_val, y_val, device,
             opt_name, lr, bs, input_size,
             hidden_size=p1_hidden, num_layers=p1_layers, dropout=p1_drop,
-            max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
-            patience=config.LSTM_TUNE_PATIENCE,
+            max_epochs=max_epochs,
+            patience=patience,
             seed=seed,
+            n_replicates=replicates,
         )
         avg_auc = sum(auc_scores) / len(auc_scores)
         phase1_results.append({
@@ -246,7 +256,7 @@ def tune_lstm_hyperparams(
         arch_grid["hidden_size"], arch_grid["num_layers"], arch_grid["dropout"]
     ))
     print(f"\n[LSTM Tuning - Phase 2] {len(arch_combos)} architecture combos x "
-          f"{config.LSTM_TUNE_REPLICATES} replicates")
+          f"{replicates} replicates")
 
     phase2_results = []
     for hidden_size, num_layers, dropout in arch_combos:
@@ -254,9 +264,10 @@ def tune_lstm_hyperparams(
             X_train, y_train, X_val, y_val, device,
             best_p1["optimizer"], best_p1["lr"], best_p1["batch_size"], input_size,
             hidden_size=hidden_size, num_layers=num_layers, dropout=dropout,
-            max_epochs=config.LSTM_TUNE_MAX_EPOCHS,
-            patience=config.LSTM_TUNE_PATIENCE,
+            max_epochs=max_epochs,
+            patience=patience,
             seed=seed + 10_000,
+            n_replicates=replicates,
         )
         avg_auc = sum(auc_scores) / len(auc_scores)
         phase2_results.append({
@@ -743,18 +754,21 @@ class LSTMModelB(nn.Module):
     Extended LSTM with 6 input features, 2 layers.
     Outputs logits for 2 classes.
     """
-    def __init__(self):
+    def __init__(self, hidden_size=None, num_layers=None, dropout=None):
         super().__init__()
         n_feat = len(config.LSTM_B_FEATURES)
+        hidden = config.LSTM_B_HIDDEN if hidden_size is None else int(hidden_size)
+        layers = config.LSTM_B_LAYERS if num_layers is None else int(num_layers)
+        drop = config.LSTM_B_DROPOUT if dropout is None else float(dropout)
         self.lstm = nn.LSTM(
             input_size=n_feat,
-            hidden_size=config.LSTM_B_HIDDEN,
-            num_layers=config.LSTM_B_LAYERS,
-            dropout=config.LSTM_B_DROPOUT if config.LSTM_B_LAYERS > 1 else 0.0,
+            hidden_size=hidden,
+            num_layers=layers,
+            dropout=drop if layers > 1 else 0.0,
             batch_first=True,
         )
-        self.dropout = nn.Dropout(config.LSTM_B_DROPOUT)
-        self.fc = nn.Linear(config.LSTM_B_HIDDEN, 2)
+        self.dropout = nn.Dropout(drop)
+        self.fc = nn.Linear(hidden, 2)
 
     def forward(self, x):
         out, _ = self.lstm(x)
@@ -1119,6 +1133,7 @@ def _train_lstm_b_impl(
     criterion,
     max_epochs,
     patience,
+    batch_size,
     seed=None,
     fold_idx: int | None = None,
 ):
@@ -1135,7 +1150,7 @@ def _train_lstm_b_impl(
         max_epochs,
         patience,
         "LSTM-B",
-        batch_size=config.LSTM_B_BATCH,
+        batch_size=batch_size,
         seed=seed,
         lr_scheduler=scheduler,
         fold_idx=fold_idx,
@@ -1151,6 +1166,11 @@ def train_lstm_b(
     seed=None,
     fold_idx: int | None = None,
     learning_rate: float | None = None,
+    optimizer_name: str | None = None,
+    batch_size: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+    dropout: float | None = None,
 ):
     """
     Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
@@ -1161,14 +1181,15 @@ def train_lstm_b(
     train_seed = config.RANDOM_SEED if seed is None else seed
     _seed_everything(train_seed)
     lr_use = float(learning_rate) if learning_rate is not None else config.LSTM_B_LR
+    opt_name = optimizer_name if optimizer_name is not None else config.LSTM_B_OPTIMIZER
+    bs = int(batch_size) if batch_size is not None else int(config.LSTM_B_BATCH)
+    hs = int(hidden_size) if hidden_size is not None else int(config.LSTM_B_HIDDEN)
+    nl = int(num_layers) if num_layers is not None else int(config.LSTM_B_LAYERS)
+    dr = float(dropout) if dropout is not None else float(config.LSTM_B_DROPOUT)
 
     def _create_model_and_optim(dev):
-        model = LSTMModelB().to(dev)
-        optimizer = torch.optim.Adam(
-            model.parameters(),
-            lr=lr_use,
-            weight_decay=config.LSTM_WD,
-        )
+        model = LSTMModelB(hidden_size=hs, num_layers=nl, dropout=dr).to(dev)
+        optimizer = _build_optimizer(model, opt_name, lr_use)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             patience=config.LSTM_B_LR_PATIENCE,
@@ -1184,6 +1205,7 @@ def train_lstm_b(
             model, X_train, y_train, X_val, y_val, device,
             optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
             config.LSTM_B_PATIENCE,
+            bs,
             seed=train_seed,
             fold_idx=fold_idx,
         )
@@ -1197,6 +1219,7 @@ def train_lstm_b(
                 model, X_train, y_train, X_val, y_val, cpu_device,
                 optimizer, scheduler, criterion, config.LSTM_B_MAX_EPOCHS,
                 config.LSTM_B_PATIENCE,
+                bs,
                 seed=train_seed,
                 fold_idx=fold_idx,
             )

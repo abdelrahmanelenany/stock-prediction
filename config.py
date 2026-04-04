@@ -120,8 +120,8 @@ LSTM_FLAT_AUC_EPS = 0.02
 LSTM_OVERFIT_LOSS_RATIO = 3.0
 LSTM_OVERFIT_WARN_epochs = 6
 
-# Optional LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
-LSTM_LR_GRID = [0.001]
+# LSTM-B LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
+LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]
 LSTM_LR_SWEEP_MAX_EPOCHS = 40  # capped budget for experiments/lstm_lr_sweep.py
 
 # Market/sector feature horizons (used in pipeline/features.py)
@@ -228,8 +228,8 @@ BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 # Trading
 K_STOCKS = 5   # Long top-5, short bottom-5 per day
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
-SIGNAL_SMOOTH_ALPHA = 0
-SIGNAL_CONFIDENCE_THRESHOLD = 0  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
+SIGNAL_SMOOTH_ALPHA = 0.0
+SIGNAL_CONFIDENCE_THRESHOLD = 0.55  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 MIN_HOLDING_DAYS = 5
 
@@ -259,9 +259,9 @@ LSTM_A_ARCH_GRID = {
 # ── LSTM-B: Extended ablation — curated 6-feature set (fixed architecture) ────
 LSTM_B_FEATURES      = LSTM_B_FEATURE_COLS
 LSTM_B_SEQ_LEN       = SEQ_LEN
-LSTM_B_HIDDEN_SIZE   = 64                     # fixed architecture for LSTM-B
-LSTM_B_NUM_LAYERS    = 2
-LSTM_B_DROPOUT       = 0.2
+LSTM_B_HIDDEN_SIZE   = 32                     # fixed architecture for LSTM-B
+LSTM_B_NUM_LAYERS    = 1
+LSTM_B_DROPOUT       = 0.0
 LSTM_B_HIDDEN        = LSTM_B_HIDDEN_SIZE     # alias for backward compatibility
 LSTM_B_LAYERS        = LSTM_B_NUM_LAYERS
 LSTM_B_OPTIMIZER     = 'adam'
@@ -286,6 +286,23 @@ LSTM_HYPERPARAM_GRID = {
 LSTM_TUNE_REPLICATES = 3      # paper uses 10; 3 is feasible on M4 for a thesis
 LSTM_TUNE_PATIENCE   = 5      # early stopping patience during tuning (paper §3.3)
 LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
+
+# LSTM-B focused tuning controls (bounded search to keep wall-time manageable)
+LSTM_B_ENABLE_TUNING = True
+LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True
+LSTM_B_HYPERPARAM_GRID = {
+    "optimizer": ["adam", "nadam"],
+    "learning_rate": [0.0003, 0.001, 0.003],
+    "batch_size": [64, 128],
+}
+LSTM_B_ARCH_GRID = {
+    "hidden_size": [32, 64],
+    "num_layers": [1, 2],
+    "dropout": [0.0, 0.2],
+}
+LSTM_B_TUNE_REPLICATES = 1
+LSTM_B_TUNE_PATIENCE = 4
+LSTM_B_TUNE_MAX_EPOCHS = 35
 
 # ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
 USE_WAVELET_DENOISING = False    # Set False to use raw prices (Fixes OOS domain shift)
