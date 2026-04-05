@@ -37,7 +37,7 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     daily_returns_net_5 = {'Date': None}
 
     print('\n' + '=' * 60)
-    print('BACKTESTING ALL 5 MODELS + ENSEMBLE')
+    print('BACKTESTING ALL 5 MODELS')
     print('=' * 60)
 
     for model_name, prob_col in model_cols.items():
@@ -99,60 +99,13 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # Ensemble
-    print('\n  [Ensemble] Computing 5-model ensemble...')
-    ensemble_cols_list = list(model_cols.values())
-    ensemble_preds = full_preds.dropna(subset=ensemble_cols_list).copy()
-    
-    if len(ensemble_preds) > 0:
-        ensemble_preds['Prob_ENS'] = ensemble_preds[ensemble_cols_list].mean(axis=1)
-
-        ensemble_smoothed = smooth_probabilities(
-            ensemble_preds, 'Prob_ENS',
-            alpha=config.SIGNAL_SMOOTH_ALPHA,
-            ema_method=getattr(config, 'SIGNAL_EMA_METHOD', 'ewm'),
-            ema_span=getattr(config, 'SIGNAL_EMA_SPAN', 20),
-        )
-        
-        sig_df_ens, _ = generate_signals(
-            ensemble_smoothed, k=config.K_STOCKS, prob_col='Prob_ENS_Smooth', return_diagnostics=True,
-        )
-        sig_df_ens = apply_holding_period_constraint(sig_df_ens, min_hold_days=config.MIN_HOLDING_DAYS)
-        sig_df_ens['Model'] = 'Ensemble'
-        all_signals.append(sig_df_ens)
-
-        port_gross_ens = compute_portfolio_returns(
-            sig_df_ens, tc_bps=0, k=config.K_STOCKS, slippage_bps=getattr(config, 'SLIPPAGE_BPS', 0),
-        )
-        port_net_5_ens = compute_portfolio_returns(
-            sig_df_ens, tc_bps=config.TC_BPS, k=config.K_STOCKS, slippage_bps=getattr(config, 'SLIPPAGE_BPS', 0),
-        )
-
-        port_returns_gross['Ensemble'] = port_gross_ens
-        port_returns_net_5['Ensemble'] = port_net_5_ens
-
-        daily_returns_gross['Ensemble'] = port_gross_ens['Gross_Return'].values
-        daily_returns_net_5['Ensemble'] = port_net_5_ens['Net_Return'].values
-
-        y_true_ens = ensemble_preds[config.TARGET_COL].values
-        y_prob_ens = ensemble_preds['Prob_ENS'].values
-        cm_ens = evaluate_classification(y_true_ens, y_prob_ens)
-        daily_auc_ens = compute_daily_auc(ensemble_preds, 'Prob_ENS', config.TARGET_COL)
-        cm_ens['Daily AUC (mean)'] = daily_auc_ens['Daily AUC (mean)']
-        cm_ens['Daily AUC (std)'] = daily_auc_ens['Daily AUC (std)']
-        cm_ens['Model'] = 'Ensemble'
-        class_metrics.append(cm_ens)
-
-        m = compute_metrics(port_gross_ens['Gross_Return'])
-        print(f'  {"Ensemble":<12}  Sharpe={m["Sharpe Ratio"]:>6.3f}  Sortino={m["Sortino Ratio"]:>6.3f}  Ann.Ret={m["Annualized Return (%)"]:.2f}%  MDD={m["Max Drawdown (%)"]:.2f}%')
-
     results_gross = [compute_metrics(port_returns_gross[m]['Gross_Return']) | {'Model': m} for m in port_returns_gross]
     results_net_5 = [compute_metrics(port_returns_net_5[m]['Net_Return']) | {'Model': m} for m in port_returns_net_5]
     
     subperiod_metrics = None
-    if 'Ensemble' in port_returns_net_5:
+    if 'LSTM-A' in port_returns_net_5:
         try:
-            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['Ensemble']['Net_Return'])
+            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM-A']['Net_Return'])
         except Exception as e:
             print(f'Warning: Could not compute subperiod metrics: {e}')
 

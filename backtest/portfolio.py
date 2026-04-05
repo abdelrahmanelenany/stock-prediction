@@ -126,12 +126,13 @@ if __name__ == '__main__':
                 'Prob_LR':   np.random.rand(),
                 'Prob_RF':   np.random.rand(),
                 'Prob_XGB':  np.random.rand(),
-                'Prob_LSTM': np.random.rand(),
+                'Prob_LSTM_A': np.random.rand(),
+                'Prob_LSTM_B': np.random.rand(),
                 'Return_NextDay': np.random.randn() * 0.01,
                 'Target': np.random.randint(0, 2),
             })
     pred_df  = pd.DataFrame(rows)
-    sig_df   = generate_signals(pred_df, k=2)
+    sig_df   = generate_signals(pred_df, k=2, prob_col='Prob_LR')
     port     = compute_portfolio_returns(sig_df, tc_bps=5, k=2)
 
     print('\nPortfolio daily returns (10 days):')

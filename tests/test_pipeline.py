@@ -15,18 +15,18 @@ class TestExecutionLayer(unittest.TestCase):
         self.df = pd.DataFrame({
             'Date': dates.repeat(2),
             'Ticker': ['A', 'B'] * 10,
-            'Prob_ENS': np.random.rand(20)
+            'Prob_LR': np.random.rand(20)
         })
         
     def test_ema_smoothing(self):
         # 1. EMA Smoothing Correctness
         df = self.df.copy()
-        df.loc[(df['Date'] == '2023-01-01') & (df['Ticker'] == 'A'), 'Prob_ENS'] = 0.8
-        df.loc[(df['Date'] == '2023-01-02') & (df['Ticker'] == 'A'), 'Prob_ENS'] = 0.5
+        df.loc[(df['Date'] == '2023-01-01') & (df['Ticker'] == 'A'), 'Prob_LR'] = 0.8
+        df.loc[(df['Date'] == '2023-01-02') & (df['Ticker'] == 'A'), 'Prob_LR'] = 0.5
         
-        smoothed = smooth_probabilities(df, 'Prob_ENS', alpha=0.3)
-        smooth_A_day1 = smoothed.loc[(smoothed['Date'] == '2023-01-01') & (smoothed['Ticker'] == 'A'), 'Prob_ENS_Smooth'].values[0]
-        smooth_A_day2 = smoothed.loc[(smoothed['Date'] == '2023-01-02') & (smoothed['Ticker'] == 'A'), 'Prob_ENS_Smooth'].values[0]
+        smoothed = smooth_probabilities(df, 'Prob_LR', alpha=0.3)
+        smooth_A_day1 = smoothed.loc[(smoothed['Date'] == '2023-01-01') & (smoothed['Ticker'] == 'A'), 'Prob_LR_Smooth'].values[0]
+        smooth_A_day2 = smoothed.loc[(smoothed['Date'] == '2023-01-02') & (smoothed['Ticker'] == 'A'), 'Prob_LR_Smooth'].values[0]
         
         self.assertAlmostEqual(smooth_A_day1, 0.8)
         self.assertAlmostEqual(smooth_A_day2, 0.3 * 0.5 + 0.7 * 0.8)
@@ -54,19 +54,18 @@ class TestExecutionLayer(unittest.TestCase):
         df = pd.DataFrame({
             'Date': [pd.Timestamp('2023-01-01')] * 6,
             'Ticker': ['A', 'B', 'C', 'D', 'E', 'F'],
-            'Prob_LR': [0.9, 0.53, 0.51, 0.49, 0.47, 0.8], # Doesn't matter because prob_col is used or average
-            'Prob_RF': [0.9, 0.53, 0.51, 0.49, 0.47, 0.8],
-            'Prob_XGB': [0.9, 0.53, 0.51, 0.49, 0.47, 0.8],
-            'Prob_LSTM_A': [0.9, 0.53, 0.51, 0.49, 0.47, 0.8],
-            'Prob_LSTM_B': [0.9, 0.53, 0.51, 0.49, 0.47, 0.1],
+            'Prob_LR': [0.9, 0.53, 0.51, 0.49, 0.47, 0.8],
             'Return_NextDay': [0] * 6,
             'Target': [0] * 6
         })
-        
-        # average Prob_ENS for F is ~ (0.8*4 + 0.1)/5 = 0.66
-        # A: 0.9, B: 0.53, C: 0.51, D: 0.49, E: 0.47, F: 0.66
-        
-        res = generate_signals(df, k=3, confidence_threshold=0.05, use_cross_sectional_z=False)
+
+        res = generate_signals(
+            df,
+            k=3,
+            prob_col='Prob_LR',
+            confidence_threshold=0.05,
+            use_cross_sectional_z=False,
+        )
         # A is 0.9 >= 0.55 -> Long
         # F is 0.66 >= 0.55 -> Long
         # B is 0.53 < 0.55 -> Hold

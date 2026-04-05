@@ -3,8 +3,8 @@ backtest/signals.py
 Step 7: Convert per-stock daily probabilities to Long / Short / Hold signals.
 
 Ranking logic (Fischer & Krauss 2017 / Krauss et al. 2017):
-  - Compute ensemble probability Prob_ENS = mean(Prob_LR, Prob_RF, Prob_XGB, Prob_LSTM)
-  - Sort all stocks by Prob_ENS descending each day
+    - Use an explicit model probability column (e.g., Prob_LR_Smooth)
+    - Sort all stocks by score descending each day
   - Top-k → Long   (predicted to outperform the median)
   - Bottom-k → Short (predicted to underperform the median)
   - Remaining → Hold
@@ -148,15 +148,13 @@ def generate_signals(
     Parameters
     ----------
     predictions_df : pd.DataFrame
-        Must contain: Date, Ticker, Return_NextDay, Target, and either
-        all four probability columns (Prob_LR, Prob_RF, Prob_XGB, Prob_LSTM)
-        or a single column specified via `prob_col`.
+        Must contain: Date, Ticker, Return_NextDay, Target, and a single
+        probability column specified via `prob_col`.
     k : int
         Number of long and short positions per day (default K_STOCKS).
     prob_col : str or None
-        If provided, use this single column as the ranking signal instead
-        of computing the 4-model ensemble average. Useful for per-model
-        performance attribution (e.g. prob_col='Prob_RF').
+        Single column used as ranking signal (e.g. prob_col='Prob_RF').
+        Required to prevent accidental ensemble usage.
     confidence_threshold : float
         Minimum distance from 0.5 (or z-score if use_cross_sectional_z=True)
         required to generate a Long or Short signal.
@@ -174,16 +172,17 @@ def generate_signals(
     -------
     pd.DataFrame or tuple[pd.DataFrame, dict]
         Input DataFrame with added columns:
-          Prob_ENS : ensemble probability (or copy of prob_col if specified)
+                    Prob_ENS : copy of prob_col for ranking diagnostics
           Prob_Z   : cross-sectional z-score (if use_cross_sectional_z=True)
           Signal   : 'Long', 'Short', or 'Hold'
         If `return_diagnostics=True`, also returns summary diagnostics about
         requested versus assigned long/short slots.
     """
-    ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
     if k is None:
         from config import K_STOCKS as CFG_K_STOCKS
         k = CFG_K_STOCKS
+    if prob_col is None:
+        raise ValueError('prob_col is required. Implicit ensemble scoring has been removed.')
 
     results = []
     long_slots_requested = 0
@@ -195,11 +194,7 @@ def generate_signals(
         g = group.copy()
         n = len(g)
 
-        # ── Ensemble probability ────────────────────────────────────────────
-        if prob_col is not None:
-            g['Prob_ENS'] = g[prob_col]
-        else:
-            g['Prob_ENS'] = g[ensemble_cols].mean(axis=1)
+        g['Prob_ENS'] = g[prob_col]
 
         # ── Cross-sectional z-score ─────────────────────────────────────────
         if use_cross_sectional_z:
@@ -343,12 +338,13 @@ if __name__ == '__main__':
                 'Prob_LR':   np.random.rand(),
                 'Prob_RF':   np.random.rand(),
                 'Prob_XGB':  np.random.rand(),
-                'Prob_LSTM': np.random.rand(),
+                'Prob_LSTM_A': np.random.rand(),
+                'Prob_LSTM_B': np.random.rand(),
                 'Return_NextDay': np.random.randn() * 0.01,
                 'Target': np.random.randint(0, 2),
             })
     df = pd.DataFrame(rows)
-    signals = generate_signals(df, k=2)
+    signals = generate_signals(df, k=2, prob_col='Prob_LR')
     print('\nSample output (first date):')
     print(signals[signals['Date'] == signals['Date'].iloc[0]]
           [['Date', 'Ticker', 'Prob_ENS', 'Signal']].to_string(index=False))

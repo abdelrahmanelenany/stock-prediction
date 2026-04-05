@@ -893,69 +893,6 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Ensemble Model Evaluation ──────────────────────────────────────────────
-    print('\n  [Ensemble] Computing ensemble...')
-    ensemble_cols = (
-        ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_B']
-        if DEV_MODE else
-        ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
-    )
-
-    # Sub-select only columns that actually have valid predictions
-    actual_ensemble_cols = [c for c in ensemble_cols if c in full_preds.columns and full_preds[c].notna().any()]
-    
-    if len(actual_ensemble_cols) >= 2:
-        # Compute ensemble probability as mean of available models
-        ensemble_preds = full_preds.dropna(subset=actual_ensemble_cols).copy()
-        ensemble_preds['Prob_ENS'] = ensemble_preds[actual_ensemble_cols].mean(axis=1)
-
-        # Apply smoothing and holding period
-        ensemble_smoothed = smooth_probabilities(
-            ensemble_preds, 'Prob_ENS',
-            alpha=SIGNAL_SMOOTH_ALPHA,
-            ema_method=SIGNAL_EMA_METHOD,
-            ema_span=SIGNAL_EMA_SPAN,
-        )
-        sig_df_ens, _ = generate_signals(
-            ensemble_smoothed, k=K_STOCKS, prob_col='Prob_ENS_Smooth',
-            return_diagnostics=True,
-        )
-        sig_df_ens = apply_holding_period_constraint(sig_df_ens, min_hold_days=MIN_HOLDING_DAYS)
-        sig_df_ens['Model'] = 'Ensemble'
-        all_signals.append(sig_df_ens)
-
-        port_gross_ens = compute_portfolio_returns(
-            sig_df_ens, tc_bps=0, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
-        )
-        port_net_5_ens = compute_portfolio_returns(
-            sig_df_ens, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
-        )
-
-        port_returns_gross['Ensemble'] = port_gross_ens
-        port_returns_net_5['Ensemble'] = port_net_5_ens
-
-        # Store daily returns
-        daily_returns_gross['Ensemble'] = port_gross_ens['Gross_Return'].values
-        daily_returns_net_5['Ensemble'] = port_net_5_ens['Net_Return'].values
-
-        # Classification metrics for ensemble
-        y_true_ens = ensemble_preds[TARGET_COL].values
-        y_prob_ens = ensemble_preds['Prob_ENS'].values
-        cm_ens = evaluate_classification(y_true_ens, y_prob_ens)
-        daily_auc_ens = compute_daily_auc(ensemble_preds, 'Prob_ENS', TARGET_COL)
-        cm_ens['Daily AUC (mean)'] = daily_auc_ens['Daily AUC (mean)']
-        cm_ens['Daily AUC (std)'] = daily_auc_ens['Daily AUC (std)']
-        cm_ens['Model'] = 'Ensemble'
-        class_metrics.append(cm_ens)
-
-        # Print gross metrics
-        m = compute_metrics(port_gross_ens['Gross_Return'])
-        print(f'  {"Ensemble":<12}  '
-              f'Sharpe={m["Sharpe Ratio"]:>6.3f}  '
-              f'Sortino={m["Sortino Ratio"]:>6.3f}  '
-              f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
-              f'MDD={m["Max Drawdown (%)"]:.2f}%')
-
     # ── Print net results ─────────────────────────────────────────────────────
     print('\n' + '=' * 60)
     print(f'RESULTS — NET ({TC_BPS:g} bps TC + {SLIPPAGE_BPS:g} bps slippage per half-turn)')
@@ -964,8 +901,7 @@ def run_walk_forward_pipeline(
     results_gross = []
     results_net_5 = []
 
-    # Include Ensemble in the list of models to report
-    all_model_names = list(model_cols.keys()) + ['Ensemble']
+    all_model_names = list(model_cols.keys())
 
     for model_name in all_model_names:
         if model_name not in port_returns_gross:

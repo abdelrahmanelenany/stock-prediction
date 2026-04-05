@@ -43,7 +43,7 @@ def main() -> None:
             'wall_seconds': round(elapsed, 1),
             'reports_dir': subdir,
         }
-        for name in ('LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B', 'Ensemble'):
+        for name in ('LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B'):
             if name in cm_by:
                 row[f'{name}_pooled_auc'] = cm_by[name].get('AUC-ROC')
                 row[f'{name}_daily_auc_mean'] = cm_by[name].get('Daily AUC (mean)')
