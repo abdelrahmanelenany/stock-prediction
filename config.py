@@ -6,24 +6,18 @@
 # =============================================================================
 UNIVERSE_MODE = "small_cap"   # Options: "large_cap" | "small_cap"
 
-# Large-cap: 30 S&P 500 mega-caps
+# Large-cap: 30 S&P 500 large caps balanced across 5 sectors
 LARGE_CAP_TICKERS = [
-    # Technology (8)
-    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA', 'AVGO',
-    # Finance (5)
-    'JPM', 'V', 'MA', 'BRK-B', 'GS',
-    # Healthcare (5)
-    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK',
-    # Consumer Discretionary + Staples (4)
-    'HD', 'MCD', 'KO', 'WMT',
-    # Energy (2)
-    'XOM', 'CVX',
-    # Industrials (2)
-    'CAT', 'HON',
-    # Communication (2)
-    'DIS', 'TMUS',
-    # Utilities + Materials (2)
-    'NEE', 'LIN',
+    # Technology (6)
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META',
+    # Finance (6)
+    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC',
+    # Healthcare (6)
+    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK', 'AMGN',
+    # Consumer (6)
+    'HD', 'MCD', 'KO', 'WMT', 'COST', 'NKE',
+    # Industrial (6)
+    'CAT', 'HON', 'UPS', 'UNP', 'GE', 'LMT',
 ]  # Total: 30
 
 # Small-cap: 30 TRUE small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
@@ -53,14 +47,11 @@ N_STOCKS = len(TICKERS)
 
 LARGE_CAP_SECTOR_MAP = {
     'AAPL': 'Tech', 'MSFT': 'Tech', 'NVDA': 'Tech', 'GOOGL': 'Tech',
-    'AMZN': 'Tech', 'META': 'Tech', 'TSLA': 'Tech', 'AVGO': 'Tech',
-    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance',
-    'JNJ': 'Healthcare', 'LLY': 'Healthcare', 'UNH': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare',
-    'HD': 'Consumer', 'MCD': 'Consumer', 'KO': 'Staples', 'WMT': 'Staples',
-    'XOM': 'Energy', 'CVX': 'Energy',
-    'CAT': 'Industrial', 'HON': 'Industrial',
-    'DIS': 'Comm', 'TMUS': 'Comm',
-    'NEE': 'Utilities', 'LIN': 'Materials',
+    'AMZN': 'Tech', 'META': 'Tech',
+    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance', 'BAC': 'Finance',
+    'JNJ': 'Healthcare', 'LLY': 'Healthcare', 'UNH': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare', 'AMGN': 'Healthcare',
+    'HD': 'Consumer', 'MCD': 'Consumer', 'KO': 'Consumer', 'WMT': 'Consumer', 'COST': 'Consumer', 'NKE': 'Consumer',
+    'CAT': 'Industrial', 'HON': 'Industrial', 'UPS': 'Industrial', 'UNP': 'Industrial', 'GE': 'Industrial', 'LMT': 'Industrial',
 }
 
 SMALL_CAP_SECTOR_MAP = {
@@ -136,8 +127,8 @@ SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
 SEQ_LEN               = 30
 
 # Context features flags
-MARKET_FEATURES_ENABLED = True
-SECTOR_FEATURES_ENABLED = True
+MARKET_FEATURES_ENABLED = False
+SECTOR_FEATURES_ENABLED = False
 
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
