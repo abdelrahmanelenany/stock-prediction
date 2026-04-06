@@ -118,8 +118,8 @@ RUN_SIGNAL_ABLATION = False
 # LSTM training audit / diagnostics
 LSTM_LOG_EVERY_EPOCH = True
 LSTM_SAVE_TRAINING_CSV = True
-LSTM_AUDIT_GRAD_NORM = False
-LSTM_MAX_GRAD_NORM = None  # if float, clip gradients to this norm
+LSTM_AUDIT_GRAD_NORM = True
+LSTM_MAX_GRAD_NORM = 1.0  # if float, clip gradients to this norm
 LSTM_FLAT_AUC_WARN_epochs = 8
 LSTM_FLAT_AUC_EPS = 0.02
 LSTM_OVERFIT_LOSS_RATIO = 3.0
@@ -294,7 +294,7 @@ LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
 
 # LSTM-B focused tuning controls (bounded search to keep wall-time manageable)
 LSTM_B_ENABLE_TUNING = True
-LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True
+LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True  # If True, tunes only on fold 0 and reuses best hyperparams for all folds
 LSTM_B_HYPERPARAM_GRID = {
     "optimizer": ["adam", "nadam"],
     "learning_rate": [0.0003, 0.001, 0.003],
