@@ -55,10 +55,24 @@ LARGE_CAP_SECTOR_MAP = {
 }
 
 SMALL_CAP_SECTOR_MAP = {
-    'HAS': 'Consumer', 'MHK': 'Consumer', 'PVH': 'Consumer', 'RL': 'Consumer', 'TPR': 'Consumer',
-    'DVA': 'Healthcare', 'BEN': 'Finance', 'IVZ': 'Finance', 'NCLH': 'Consumer', 'CCL': 'Consumer',
-    'FMC': 'Materials', 'AES': 'Utilities', 'SEE': 'Materials', 'AIZ': 'Finance', 'PARA': 'Comm',
-    'WHR': 'Consumer', 'MOS': 'Materials', 'NWL': 'Consumer', 'HSIC': 'Healthcare', 'FRT': 'REIT',
+    # Tech / Growth
+    'SMCI': 'Tech', 'FSLY': 'Tech', 'AI': 'Tech', 'PLUG': 'Tech', 'RUN': 'Tech', 'ARRY': 'Tech',
+
+    # Healthcare / Biotech
+    'NVAX': 'Healthcare', 'ICPT': 'Healthcare', 'SRPT': 'Healthcare', 'BLUE': 'Healthcare',
+    'EXEL': 'Healthcare', 'IONS': 'Healthcare',
+
+    # Consumer / Retail
+    'GME': 'Consumer', 'BOOT': 'Consumer', 'CROX': 'Consumer', 'SHOO': 'Consumer',
+    'CAL': 'Consumer', 'MOV': 'Consumer',
+
+    # Industrials / Manufacturing
+    'AA': 'Industrial', 'CLF': 'Industrial', 'X': 'Industrial', 'ATI': 'Industrial',
+    'WCC': 'Industrial', 'LPX': 'Industrial',
+
+    # Financials
+    'FHN': 'Finance', 'ZION': 'Finance', 'CMA': 'Finance', 'PACW': 'Finance',
+    'NYCB': 'Finance', 'STWD': 'Finance',
 }
 
 SECTOR_MAP = LARGE_CAP_SECTOR_MAP if UNIVERSE_MODE == "large_cap" else SMALL_CAP_SECTOR_MAP
@@ -127,8 +141,8 @@ SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
 SEQ_LEN               = 30
 
 # Context features flags
-MARKET_FEATURES_ENABLED = False
-SECTOR_FEATURES_ENABLED = False
+MARKET_FEATURES_ENABLED = True
+SECTOR_FEATURES_ENABLED = True
 
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
