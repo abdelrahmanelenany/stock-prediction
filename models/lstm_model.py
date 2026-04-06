@@ -875,7 +875,7 @@ def _train_lstm_impl(
     of_n = getattr(config, "LSTM_OVERFIT_WARN_epochs", 6)
 
     epoch_rows: list[dict[str, Any]] = []
-    best_val_loss = float("inf")
+    best_val_auc = float("-inf")
     best_state: dict | None = None
     best_epoch = -1
     patience_ctr = 0
@@ -989,8 +989,9 @@ def _train_lstm_impl(
                 )
                 of_warned = True
 
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            val_auc_for_ckpt = val_auc if val_auc is not None else float("-inf")
+            if val_auc_for_ckpt > best_val_auc:
+                best_val_auc = val_auc_for_ckpt
                 best_epoch = epoch + 1
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 patience_ctr = 0
@@ -999,12 +1000,12 @@ def _train_lstm_impl(
                 if patience_ctr >= patience:
                     stop_reason = "early_stop_patience"
                     pbar.set_postfix(
-                        {"val_loss": f"{best_val_loss:.4f}", "status": "early stop"}
+                        {"val_loss": f"{val_loss:.4f}", "best_val_auc": f"{best_val_auc:.4f}", "status": "early stop"}
                     )
                     break
 
             pbar.set_postfix(
-                {"val_loss": f"{val_loss:.4f}", "best": f"{best_val_loss:.4f}"}
+                {"val_loss": f"{val_loss:.4f}", "best_val_auc": f"{best_val_auc:.4f}"}
             )
 
     if best_state is None:
@@ -1016,7 +1017,7 @@ def _train_lstm_impl(
 
     print(
         f"  [{desc}] stopped: {stop_reason} | best_epoch={best_epoch} "
-        f"| best_val_loss={best_val_loss:.4f}"
+        f"| best_val_auc={best_val_auc:.4f}"
     )
 
     if save_csv and epoch_rows:
