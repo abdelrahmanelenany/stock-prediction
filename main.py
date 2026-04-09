@@ -81,7 +81,14 @@ from config import (
     SAVE_FOLD_REPORTS,
     SIGNAL_EMA_METHOD, SIGNAL_EMA_SPAN,
     DEV_MODE,
+    LARGE_CAP_CONFIG, SMALL_CAP_CONFIG,
 )
+
+# Whether the active universe inverts signals at portfolio level.
+# Classification metrics must be evaluated on (1 - prob) when True,
+# because the portfolio bets against the raw model output.
+_UNIVERSE_CFG = LARGE_CAP_CONFIG if config.UNIVERSE_MODE == 'large_cap' else SMALL_CAP_CONFIG
+INVERT_SIGNALS: bool = _UNIVERSE_CFG.invert_signals
 
 TARGET_COL = 'Target'
 CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
@@ -214,6 +221,11 @@ def _format_summary(results_dict: dict) -> str:
 
     lines.append("\n" + "=" * 60)
     lines.append("CLASSIFICATION METRICS")
+    # Detect whether this run used inverted probs (from first available row)
+    _first_cls = results_dict['classification'][0] if results_dict['classification'] else {}
+    _inverted = _first_cls.get('Signals Inverted', False)
+    if _inverted:
+        lines.append("  (evaluated on 1-prob to match invert_signals=True trading direction)")
     lines.append("=" * 60)
     for row in results_dict['classification']:
         lines.append(
@@ -797,6 +809,7 @@ def run_walk_forward_pipeline(
     port_returns_net_5 = {}
     class_metrics = []
     all_signals = []
+    fold_sharpe_rows = []
     daily_returns_gross = {'Date': None}
     daily_returns_net_5 = {'Date': None}
 
@@ -873,14 +886,19 @@ def run_walk_forward_pipeline(
         daily_returns_net_5[model_name] = port_net_5['Net_Return'].values
 
         # Classification metrics (pooled + daily AUC for diagnostic)
+        # When invert_signals=True the portfolio trades against raw model output,
+        # so we evaluate on (1 - prob) to measure the actual trading direction.
         y_true = valid_preds[TARGET_COL].values
         y_prob = valid_preds[prob_col].values
-        cm = evaluate_classification(y_true, y_prob)
+        cm = evaluate_classification(y_true, y_prob, invert_probs=INVERT_SIGNALS)
 
         # Add daily AUC to diagnose pooled vs within-day ranking
-        daily_auc = compute_daily_auc(valid_preds, prob_col, TARGET_COL)
+        daily_auc = compute_daily_auc(
+            valid_preds, prob_col, TARGET_COL, invert_probs=INVERT_SIGNALS
+        )
         cm['Daily AUC (mean)'] = daily_auc['Daily AUC (mean)']
         cm['Daily AUC (std)'] = daily_auc['Daily AUC (std)']
+        cm['Signals Inverted'] = INVERT_SIGNALS
 
         cm['Model'] = model_name
         class_metrics.append(cm)
@@ -949,6 +967,13 @@ def run_walk_forward_pipeline(
     full_preds_path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_full_predictions.csv')
     full_preds.to_csv(full_preds_path, index=False)
     print(f'  Saved raw probabilities to {full_preds_path}')
+
+    # Save fold-level gross Sharpe diagnostics for this run.
+    if fold_sharpe_rows:
+        fold_sharpe_df = pd.DataFrame(fold_sharpe_rows).sort_values(['Model', 'Fold']).reset_index(drop=True)
+        fold_sharpe_path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_fold_sharpe_per_model.csv')
+        fold_sharpe_df.to_csv(fold_sharpe_path, index=False)
+        print(f'  Saved fold-level Sharpe report to {fold_sharpe_path}')
 
     save_all_results(
         results_dict=results_dict,

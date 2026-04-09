@@ -355,6 +355,21 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     df["BB_PctB"] = (df["Close"] - lower) / (upper - lower + 1e-10)
     # Note: BB_Width is NOT computed — not in any active feature set
 
+    if 'NegReturn_1d' not in df.columns:
+        df['NegReturn_1d'] = -df['Return_1d']
+
+    if 'NegReturn_5d' not in df.columns:
+        df['NegReturn_5d'] = -df['Return_5d']
+
+    if 'RSI_Reversal' not in df.columns:
+        df['RSI_Reversal'] = 100 - df['RSI_14']
+
+    if 'NegMACD' not in df.columns:
+        df['NegMACD'] = -df['MACD']
+
+    if 'BB_Reversal' not in df.columns:
+        df['BB_Reversal'] = 1 - df['BB_PctB']
+
     # ── RealVol_20d (annualised 20-day realised volatility) ───────────
     log_ret = np.log(df["Close"] / df["Close"].shift(1))
     df["RealVol_20d"] = log_ret.rolling(20).std() * np.sqrt(252)
@@ -367,7 +382,10 @@ def compute_technical_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def compute_sector_rel_return(df: pd.DataFrame, sector_map: dict) -> pd.DataFrame:
+def compute_sector_rel_return(df: pd.DataFrame, sector_map: dict, 
+                              sector_min_size: int = 5, 
+                              sector_winsorize: bool = True,
+                              sector_winsorize_pct: float = 0.05) -> pd.DataFrame:
     """
     Compute SectorRelReturn: each stock's Return_1d minus the equal-weighted
     mean Return_1d of all stocks in the same sector on that date.
@@ -384,6 +402,13 @@ def compute_sector_rel_return(df: pd.DataFrame, sector_map: dict) -> pd.DataFram
         Must already have Return_1d computed.
     sector_map : dict
         {ticker: sector_name} mapping from config.py.
+    sector_min_size : int
+        Minimum number of stocks required in a sector to compute relative return.
+        If fewer, SectorRelReturn is set to NaN.
+    sector_winsorize : bool
+        If True, winsorizes the resulting feature at sector_winsorize_pct and 1-sector_winsorize_pct cross-sectionally per date.
+    sector_winsorize_pct : float
+        Percentile for winsorization.
 
     Returns
     -------
@@ -409,10 +434,26 @@ def compute_sector_rel_return(df: pd.DataFrame, sector_map: dict) -> pd.DataFram
     # Leave-one-out sector mean:
     # mean_excl_self = (sum - self_value) / (count - 1)
     sector_sums = sector_means * sector_counts
-    df['SectorRelReturn'] = (
+    sr_return = (
         df['Return_1d']
         - (sector_sums - df['Return_1d']) / (sector_counts - 1).clip(lower=1)
     )
+
+    # Set to NaN if sector size < sector_min_size
+    sr_return = sr_return.where(sector_counts >= sector_min_size, np.nan)
+
+    if sector_winsorize:
+        # Winsorize at sector_winsorize_pct and 1-sector_winsorize_pct percentile within each date
+        def winsorize_group(x):
+            if x.dropna().empty:
+                return x
+            lower_q = x.quantile(sector_winsorize_pct)
+            upper_q = x.quantile(1.0 - sector_winsorize_pct)
+            return x.clip(lower=lower_q, upper=upper_q)
+            
+        sr_return = df.assign(sr=sr_return).groupby('Date')['sr'].transform(winsorize_group)
+
+    df['SectorRelReturn'] = sr_return
 
     df.drop(columns=['Sector'], inplace=True)
     return df
@@ -514,7 +555,33 @@ def compute_sector_context_features(df: pd.DataFrame, sector_map: dict) -> pd.Da
     return df
 
 
-def recompute_features_from_denoised(df: pd.DataFrame) -> pd.DataFrame:
+def apply_reversal_orientation(df: pd.DataFrame, universe_cfg) -> pd.DataFrame:
+    """
+    Add reversal-oriented feature aliases for mean-reversion universes.
+
+    Original columns are preserved for compatibility across universe configs.
+    """
+    if not getattr(universe_cfg, "invert_features", False):
+        return df
+
+    if 'NegReturn_1d' not in df.columns:
+        df['NegReturn_1d'] = -df['Return_1d']
+
+    if 'NegReturn_5d' not in df.columns:
+        df['NegReturn_5d'] = -df['Return_5d']
+
+    if 'RSI_Reversal' not in df.columns:
+        df['RSI_Reversal'] = 100 - df['RSI_14']
+
+    if 'NegMACD' not in df.columns:
+        df['NegMACD'] = -df['MACD']
+
+    if 'BB_Reversal' not in df.columns:
+        df['BB_Reversal'] = 1 - df['BB_PctB']
+    return df
+
+
+def recompute_features_from_denoised(df: pd.DataFrame, sector_min_size: int = 5, sector_winsorize: bool = True, sector_winsorize_pct: float = 0.05) -> pd.DataFrame:
     """
     Recompute all Close-dependent features from denoised Close prices.
     
@@ -581,18 +648,26 @@ def recompute_features_from_denoised(df: pd.DataFrame) -> pd.DataFrame:
     result = pd.concat(result_parts).sort_values(['Date', 'Ticker'])
     
     # Recompute SectorRelReturn (depends on Return_1d)
-    result = compute_sector_rel_return(result, sector_map=config.SECTOR_MAP)
+    result = compute_sector_rel_return(
+        result, sector_map=config.SECTOR_MAP,
+        sector_min_size=sector_min_size, 
+        sector_winsorize=sector_winsorize,
+        sector_winsorize_pct=sector_winsorize_pct
+    )
     
     if getattr(config, 'MARKET_FEATURES_ENABLED', False):
         result = compute_market_context_features(result)
         
     if getattr(config, 'SECTOR_FEATURES_ENABLED', False):
         result = compute_sector_context_features(result, sector_map=config.SECTOR_MAP)
+
+    universe_cfg = config.LARGE_CAP_CONFIG if config.UNIVERSE_MODE == "large_cap" else config.SMALL_CAP_CONFIG
+    result = apply_reversal_orientation(result, universe_cfg)
         
     return result
 
 
-def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
+def build_feature_matrix(data: pd.DataFrame, sector_min_size: int = 5, sector_winsorize: bool = True, sector_winsorize_pct: float = 0.05) -> pd.DataFrame:
     """
     Runs the full feature pipeline on the long-format OHLCV DataFrame:
       1. Compute 8 technical features per ticker (from RAW Close prices)
@@ -616,13 +691,24 @@ def build_feature_matrix(data: pd.DataFrame) -> pd.DataFrame:
 
     # Step 2 — Compute SectorRelReturn and context features
     print("Computing SectorRelReturn and Context Features...")
-    result = compute_sector_rel_return(result, sector_map=config.SECTOR_MAP)
+    result = compute_sector_rel_return(
+        result, sector_map=config.SECTOR_MAP,
+        sector_min_size=sector_min_size,
+        sector_winsorize=sector_winsorize,
+        sector_winsorize_pct=sector_winsorize_pct
+    )
     
     if getattr(config, 'MARKET_FEATURES_ENABLED', False):
         result = compute_market_context_features(result)
         
     if getattr(config, 'SECTOR_FEATURES_ENABLED', False):
         result = compute_sector_context_features(result, sector_map=config.SECTOR_MAP)
+
+    universe_cfg = config.LARGE_CAP_CONFIG if config.UNIVERSE_MODE == "large_cap" else config.SMALL_CAP_CONFIG
+    result = apply_reversal_orientation(result, universe_cfg)
+
+    print("Computed dataframe columns:")
+    print(result.columns.tolist())
 
     # Step 3 — Drop NaN rows
     before = len(result)

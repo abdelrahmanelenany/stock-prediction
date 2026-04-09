@@ -603,7 +603,7 @@ def prepare_lstm_a_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.
 
 
 def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
-                                             val_ratio: float = 0.2):
+                                             val_ratio: float = 0.2, feature_cols=None):
     """
     Build LSTM-B sequences with TEMPORAL train/val split.
 
@@ -611,7 +611,7 @@ def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.
     splits by DATE - the last val_ratio of training DATES become validation.
 
     Args:
-        df_train: DataFrame with columns [Date, Ticker, *LSTM_B_FEATURES, Target]
+        df_train: DataFrame with columns [Date, Ticker, Target, ...]
         df_test:  DataFrame with same columns
         val_ratio: Fraction of training dates to use for validation (default 0.2)
 
@@ -622,7 +622,8 @@ def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.
         keys_train, keys_val, keys_test: (date, ticker) tuples for alignment
     """
     seq_len = config.LSTM_B_SEQ_LEN
-    feature_cols = config.LSTM_B_FEATURES
+    if feature_cols is None:
+        feature_cols = config.LSTM_B_FEATURES
 
     # Split training dates temporally
     train_dates_sorted = sorted(df_train['Date'].unique())
@@ -754,9 +755,9 @@ class LSTMModelB(nn.Module):
     Extended LSTM with 6 input features, 2 layers.
     Outputs logits for 2 classes.
     """
-    def __init__(self, hidden_size=None, num_layers=None, dropout=None):
+    def __init__(self, hidden_size=None, num_layers=None, dropout=None, input_size=None):
         super().__init__()
-        n_feat = len(config.LSTM_B_FEATURES)
+        n_feat = len(config.LSTM_B_FEATURES) if input_size is None else int(input_size)
         hidden = config.LSTM_B_HIDDEN if hidden_size is None else int(hidden_size)
         layers = config.LSTM_B_LAYERS if num_layers is None else int(num_layers)
         drop = config.LSTM_B_DROPOUT if dropout is None else float(dropout)
@@ -1187,9 +1188,10 @@ def train_lstm_b(
     hs = int(hidden_size) if hidden_size is not None else int(config.LSTM_B_HIDDEN)
     nl = int(num_layers) if num_layers is not None else int(config.LSTM_B_LAYERS)
     dr = float(dropout) if dropout is not None else float(config.LSTM_B_DROPOUT)
+    n_feat = int(X_train.shape[-1])
 
     def _create_model_and_optim(dev):
-        model = LSTMModelB(hidden_size=hs, num_layers=nl, dropout=dr).to(dev)
+        model = LSTMModelB(hidden_size=hs, num_layers=nl, dropout=dr, input_size=n_feat).to(dev)
         optimizer = _build_optimizer(model, opt_name, lr_use)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,

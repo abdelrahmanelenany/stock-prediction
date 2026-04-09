@@ -29,6 +29,7 @@ def compute_portfolio_returns(
     tc_bps: float = TC_BPS,
     k: int = K_STOCKS,
     slippage_bps: float = 0.0,
+    invert_signals: bool = True,
 ) -> pd.DataFrame:
     """
     Compute daily gross and net portfolio returns for a long-short strategy.
@@ -63,6 +64,14 @@ def compute_portfolio_returns(
     tc = tc_bps / 10_000
     slip = slippage_bps / 10_000
     daily = []
+    
+    if invert_signals:
+        signals_df = signals_df.copy()
+        mask_long = signals_df['Signal'] == 'Long'
+        mask_short = signals_df['Signal'] == 'Short'
+        signals_df.loc[mask_long, 'Signal'] = 'Short'
+        signals_df.loc[mask_short, 'Signal'] = 'Long'
+
     prev_signals: dict[str, str] = {}   # ticker → last signal
 
     for date, group in signals_df.sort_values('Date').groupby('Date'):

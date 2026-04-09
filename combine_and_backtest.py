@@ -3,11 +3,16 @@ import pandas as pd
 import numpy as np
 
 import config
+from config import LARGE_CAP_CONFIG, SMALL_CAP_CONFIG
 from backtest.signals import generate_signals, smooth_probabilities, apply_holding_period_constraint, compute_turnover_and_holding_stats
 from backtest.portfolio import compute_portfolio_returns
 from backtest.metrics import compute_metrics, evaluate_classification, compute_daily_auc
 from evaluation.metrics_utils import compute_subperiod_metrics
 from main import save_all_results
+
+# Mirror main.py: respect invert_signals so classification metrics match trading direction.
+_UNIVERSE_CFG = LARGE_CAP_CONFIG if config.UNIVERSE_MODE == 'large_cap' else SMALL_CAP_CONFIG
+INVERT_SIGNALS: bool = _UNIVERSE_CFG.invert_signals
 
 def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, reports_dir: str = 'reports_combined'):
     print(f"Loading Baseline Predictions from: {baseline_preds_path}")
@@ -83,11 +88,14 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
 
         y_true = valid_preds[config.TARGET_COL].values
         y_prob = valid_preds[prob_col].values
-        cm = evaluate_classification(y_true, y_prob)
+        cm = evaluate_classification(y_true, y_prob, invert_probs=INVERT_SIGNALS)
 
-        daily_auc = compute_daily_auc(valid_preds, prob_col, config.TARGET_COL)
+        daily_auc = compute_daily_auc(
+            valid_preds, prob_col, config.TARGET_COL, invert_probs=INVERT_SIGNALS
+        )
         cm['Daily AUC (mean)'] = daily_auc['Daily AUC (mean)']
         cm['Daily AUC (std)'] = daily_auc['Daily AUC (std)']
+        cm['Signals Inverted'] = INVERT_SIGNALS
 
         cm['Model'] = model_name
         class_metrics.append(cm)

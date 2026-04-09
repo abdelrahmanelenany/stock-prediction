@@ -94,17 +94,25 @@ def evaluate_classification(
     y_true: np.ndarray,
     y_prob: np.ndarray,
     threshold: float = 0.5,
+    invert_probs: bool = False,
 ) -> dict:
     """
     Binary classification metrics for thesis Table T8.
 
     Parameters
     ----------
-    y_true    : array-like of 0/1 ground-truth labels
-    y_prob    : array-like of predicted probabilities for class 1
-    threshold : decision boundary (default 0.5)
+    y_true       : array-like of 0/1 ground-truth labels
+    y_prob       : array-like of predicted probabilities for class 1
+    threshold    : decision boundary (default 0.5)
+    invert_probs : if True, evaluate on (1 - y_prob) instead of y_prob.
+                   Use this when the portfolio applies invert_signals=True,
+                   so that metrics reflect the actual trading direction rather
+                   than the raw (anti-predictive) model output.
     """
-    y_pred = (np.asarray(y_prob) >= threshold).astype(int)
+    y_prob = np.asarray(y_prob)
+    if invert_probs:
+        y_prob = 1.0 - y_prob
+    y_pred = (y_prob >= threshold).astype(int)
     return {
         'Accuracy (%)': round(accuracy_score(y_true, y_pred) * 100, 2),
         'AUC-ROC':      round(roc_auc_score(y_true, y_prob), 4),
@@ -116,6 +124,7 @@ def compute_daily_auc(
     predictions_df: pd.DataFrame,
     prob_col: str,
     target_col: str = 'Target',
+    invert_probs: bool = False,
 ) -> dict:
     """
     Compute average AUC-ROC per day (cross-sectional ranking quality).
@@ -138,6 +147,9 @@ def compute_daily_auc(
         Column name for predicted probabilities.
     target_col : str
         Column name for ground truth labels.
+    invert_probs : bool
+        If True, evaluate on (1 - prob) within each day. Use when
+        invert_signals=True so the metric reflects the actual trading direction.
 
     Returns
     -------
@@ -151,6 +163,8 @@ def compute_daily_auc(
     for date, group in predictions_df.groupby('Date'):
         y_true = group[target_col].values
         y_prob = group[prob_col].values
+        if invert_probs:
+            y_prob = 1.0 - y_prob
 
         # AUC requires both classes present
         if len(np.unique(y_true)) < 2:

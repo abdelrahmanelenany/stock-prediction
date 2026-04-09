@@ -1,24 +1,51 @@
+from dataclasses import dataclass, field
+from typing import List
+
+@dataclass
+class UniverseConfig:
+    name: str
+    tickers: List[str]
+    
+    # Feature sets
+    baseline_feature_cols: List[str]
+    lstm_b_feature_cols: List[str]
+    
+    # Signal direction
+    invert_signals: bool
+    invert_features: bool
+    
+    # Sector computation
+    sector_min_size: int
+    sector_winsorize: bool
+    sector_winsorize_pct: float   # e.g. 0.05 for 5th/95th
+    
+    # Portfolio construction
+    k_stocks: int
+    
+    # LSTM-B inclusion in ensemble
+    include_lstm_b_in_ensemble: bool
+
 # config.py — Single source of truth for all hyperparameters and constants
 # Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
 # Universe-mode setup supports large-cap vs relative small-cap S&P 500 experiments.
 # =============================================================================
 # 0. UNIVERSE MODE — toggle between large-cap and small-cap experiments
 # =============================================================================
-UNIVERSE_MODE = "small_cap"   # Options: "large_cap" | "small_cap"
+UNIVERSE_MODE = "large_cap"   # Options: "large_cap" | "small_cap"
 
-# Large-cap: 30 S&P 500 large caps balanced across 5 sectors
+# Large-cap: 50 S&P 500 large caps balanced across 5 sectors
 LARGE_CAP_TICKERS = [
-    # Technology (6)
-    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META',
-    # Finance (6)
-    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC',
-    # Healthcare (6)
-    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK', 'AMGN',
-    # Consumer (6)
-    'HD', 'MCD', 'KO', 'WMT', 'COST', 'NKE',
-    # Industrial (6)
-    'CAT', 'HON', 'UPS', 'UNP', 'GE', 'LMT',
-]  # Total: 30
+    # Technology (10)
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'IBM', 'ADBE', 'AVGO', 'CRM',
+    # Finance (10)
+    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC', 'MS', 'C', 'BLK', 'SCHW',
+    # Healthcare (10)
+    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK', 'AMGN', 'TMO', 'DHR', 'BMY', 'GILD',
+    # Consumer (10)
+    'HD', 'MCD', 'KO', 'WMT', 'COST', 'NKE', 'PG', 'PEP', 'TGT', 'LOW',
+    # Industrial (10)
+    'CAT', 'HON', 'UPS', 'UNP', 'GE', 'LMT', 'DE', 'ETN', 'MMM', 'RTX',
+]  # Total: 50
 
 # Small-cap: 30 TRUE small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
 # Market cap range: ~300M – 5B USD (actual small-cap territory)
@@ -47,11 +74,15 @@ N_STOCKS = len(TICKERS)
 
 LARGE_CAP_SECTOR_MAP = {
     'AAPL': 'Tech', 'MSFT': 'Tech', 'NVDA': 'Tech', 'GOOGL': 'Tech',
-    'AMZN': 'Tech', 'META': 'Tech',
+    'AMZN': 'Tech', 'META': 'Tech', 'IBM': 'Tech', 'ADBE': 'Tech', 'AVGO': 'Tech', 'CRM': 'Tech',
     'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance', 'BAC': 'Finance',
+    'MS': 'Finance', 'C': 'Finance', 'BLK': 'Finance', 'SCHW': 'Finance',
     'JNJ': 'Healthcare', 'LLY': 'Healthcare', 'UNH': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare', 'AMGN': 'Healthcare',
+    'TMO': 'Healthcare', 'DHR': 'Healthcare', 'BMY': 'Healthcare', 'GILD': 'Healthcare',
     'HD': 'Consumer', 'MCD': 'Consumer', 'KO': 'Consumer', 'WMT': 'Consumer', 'COST': 'Consumer', 'NKE': 'Consumer',
+    'PG': 'Consumer', 'PEP': 'Consumer', 'TGT': 'Consumer', 'LOW': 'Consumer',
     'CAT': 'Industrial', 'HON': 'Industrial', 'UPS': 'Industrial', 'UNP': 'Industrial', 'GE': 'Industrial', 'LMT': 'Industrial',
+    'DE': 'Industrial', 'ETN': 'Industrial', 'MMM': 'Industrial', 'RTX': 'Industrial',
 }
 
 SMALL_CAP_SECTOR_MAP = {
@@ -136,6 +167,8 @@ BETA_WINDOW = 60
 SECTOR_RETURN_EXTRA_HORIZONS = (21,)
 SECTOR_VOL_EXTRA_WINDOWS = (60,)
 SECTOR_REL_ZSCORE_RETURN_COLS = ("Return_1d",)
+SECTOR_MIN_SIZE = 3        # for large-cap (10 per sector → 9 after LOO)
+SECTOR_WINSORIZE = True
 
 # ── Feature config (10 active features including momentum + Context features) ────────────────
 SEQ_LEN               = 30
@@ -147,7 +180,9 @@ SECTOR_FEATURES_ENABLED = True
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
     "Return_1d",        # LSTM-A, LSTM-B, Baselines
+    "NegReturn_1d",
     "Return_5d",        # LSTM-B, Baselines (weekly momentum)
+    "NegReturn_5d",
     "Return_21d",       # LSTM-B, Baselines (monthly momentum)
     "RSI_14",           # LSTM-A, LSTM-B, Baselines
     "MACD",             # LSTM-A only
@@ -157,6 +192,10 @@ ALL_FEATURE_COLS = [
     "Volume_Ratio",     # LSTM-B, Baselines
     "SectorRelReturn",  # LSTM-B, Baselines
 ]
+
+for _col in ["NegReturn_1d", "NegReturn_5d", "RSI_Reversal", "NegMACD", "BB_Reversal"]:
+    if _col not in ALL_FEATURE_COLS:
+        ALL_FEATURE_COLS.append(_col)
 
 if MARKET_FEATURES_ENABLED:
     ALL_FEATURE_COLS.extend([
@@ -356,3 +395,31 @@ MODELS_FULL = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
 
 # ── Model registry (after refactor) ──────────────────────────────────────────
 MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
+
+LARGE_CAP_CONFIG = UniverseConfig(
+    name="large_cap",
+    tickers=LARGE_CAP_TICKERS,
+    baseline_feature_cols=BASELINE_FEATURE_COLS,
+    lstm_b_feature_cols=LSTM_B_FEATURE_COLS,
+    invert_signals=True,
+    invert_features=False,
+    sector_min_size=3,
+    sector_winsorize=True,
+    sector_winsorize_pct=0.05,
+    k_stocks=5,
+    include_lstm_b_in_ensemble=True,
+)
+
+SMALL_CAP_CONFIG = UniverseConfig(
+    name="small_cap",
+    tickers=SMALL_CAP_TICKERS,
+    baseline_feature_cols=BASELINE_FEATURE_COLS,   # existing, momentum-flavored
+    lstm_b_feature_cols=LSTM_B_FEATURE_COLS,       # existing
+    invert_signals=False,
+    invert_features=False,
+    sector_min_size=3,
+    sector_winsorize=False,   # preserve extreme signals in small-cap
+    sector_winsorize_pct=0.0,
+    k_stocks=5,
+    include_lstm_b_in_ensemble=True,  # LSTM-B unreliable in small-cap
+)
