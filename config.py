@@ -108,9 +108,6 @@ SMALL_CAP_SECTOR_MAP = {
 
 SECTOR_MAP = LARGE_CAP_SECTOR_MAP if UNIVERSE_MODE == "large_cap" else SMALL_CAP_SECTOR_MAP
 
-# ── Development Mode: faster iteration with shorter sequences and larger batches ───
-DEV_MODE = True  # Set False for final thesis run
-
 START_DATE = '2019-01-01'
 END_DATE   = '2024-12-31'
 
@@ -179,14 +176,14 @@ SECTOR_FEATURES_ENABLED = True
 
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
-    "Return_1d",        # LSTM-A, LSTM-B, Baselines
+    "Return_1d",        # LSTM-B, Baselines
     "NegReturn_1d",
     "Return_5d",        # LSTM-B, Baselines (weekly momentum)
     "NegReturn_5d",
     "Return_21d",       # LSTM-B, Baselines (monthly momentum)
-    "RSI_14",           # LSTM-A, LSTM-B, Baselines
-    "MACD",             # LSTM-A only
-    "ATR_14",           # LSTM-A only
+    "RSI_14",           # LSTM-B, Baselines
+    "MACD",             # Baselines only
+    "ATR_14",           # Baselines only
     "BB_PctB",          # LSTM-B, Baselines
     "RealVol_20d",      # LSTM-B, Baselines
     "Volume_Ratio",     # LSTM-B, Baselines
@@ -222,16 +219,7 @@ if SECTOR_FEATURES_ENABLED:
 
 N_TOTAL_FEATURES = len(ALL_FEATURE_COLS)  # Dynamically computed
 
-# ── Per-model feature sets (Section 7.1) ────────────────────────────────────
-LSTM_A_FEATURE_COLS = [
-    "MACD",        # 12/26 EMA difference (Bhandari §4.3)
-    "RSI_14",      # 14-day RSI (Bhandari §4.3)
-    "ATR_14",      # 14-day ATR (Bhandari §4.3)
-    "Return_1d",   # 1-day simple return
-    "Return_5d",   # 5-day simple return (weekly momentum)
-    "Return_21d",  # 21-day simple return (monthly momentum)
-]
-
+# ── Per-model feature sets ────────────────────────────────────────────────────
 LSTM_B_FEATURE_COLS = [
     "Return_1d",
     "Return_5d",        # Weekly momentum
@@ -272,45 +260,36 @@ BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 # Trading
 K_STOCKS = 5   # Long top-5, short bottom-5 per day
 TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
+
+# ── Target definition ────────────────────────────────────────────────────────
+# Number of trading days ahead to compute the forward return for the Target.
+# 1  → predicts next-day cross-sectional rank (original, near random in large-cap)
+# 5  → predicts 5-day (weekly) forward return rank  ← RECOMMENDED for large-cap
+# 21 → predicts 21-day (monthly) forward return rank
+# NOTE: Changing this requires deleting the feature cache and rerunning with
+#       load_cached=False so targets are recomputed from scratch.
+TARGET_HORIZON_DAYS = 21
+
 SIGNAL_SMOOTH_ALPHA = 0.0
-SIGNAL_CONFIDENCE_THRESHOLD = 0.55  # Requires prob to be >= 0.5 + threshold or <= 0.5 - threshold
+SIGNAL_CONFIDENCE_THRESHOLD = 0.55  # z-score threshold: sit out when model has low conviction
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 MIN_HOLDING_DAYS = 5
 
 # Execution semantics (see backtest/portfolio.py): features at date t use data through t;
 # signals rank at t; portfolio earns Return_NextDay (close t to close t+1).
 
-# ── LSTM-A: Bhandari-inspired technical indicator LSTM (4 features) ─────────
-# Architecture is determined by hyperparameter tuning (Section 1 / 7.4)
-LSTM_A_DEV_MODE     = True                  # Set False for final thesis run only
-LSTM_A_FEATURES      = LSTM_A_FEATURE_COLS  # 4 features: MACD, RSI, ATR, Return_1d
-LSTM_A_SEQ_LEN       = SEQ_LEN
-LSTM_A_OPTIMIZER     = 'adam'                # will be tuned
-LSTM_A_LR            = 0.001                 # will be tuned
-LSTM_A_BATCH         = 256 if DEV_MODE else 128   # DEV: faster batches
-LSTM_A_MAX_EPOCHS    = 200
-LSTM_A_PATIENCE      = 15
-LSTM_A_VAL_SPLIT     = 0.2
-
-# LSTM-A architecture search grid (Bhandari §3.3 Algorithm 2)
-# Architecture is data-driven, not fixed
-LSTM_A_ARCH_GRID = {
-    "hidden_size": [16, 32, 64],   # small range appropriate for 4-feature input
-    "num_layers":  [1, 2],         # Bhandari §5.5 found single-layer often wins
-    "dropout":     [0.1, 0.2],
-}
-
-# ── LSTM-B: Extended ablation — curated 6-feature set (fixed architecture) ────
+# ── LSTM-B: Primary neural-network model — curated multi-feature set ──────────
+# Architecture: 32 hidden units, 1 layer, no dropout (empirically best for small-data regime)
 LSTM_B_FEATURES      = LSTM_B_FEATURE_COLS
 LSTM_B_SEQ_LEN       = SEQ_LEN
-LSTM_B_HIDDEN_SIZE   = 32                     # fixed architecture for LSTM-B
+LSTM_B_HIDDEN_SIZE   = 32
 LSTM_B_NUM_LAYERS    = 1
 LSTM_B_DROPOUT       = 0.0
 LSTM_B_HIDDEN        = LSTM_B_HIDDEN_SIZE     # alias for backward compatibility
 LSTM_B_LAYERS        = LSTM_B_NUM_LAYERS
 LSTM_B_OPTIMIZER     = 'adam'
 LSTM_B_LR            = 0.001
-LSTM_B_BATCH         = 256 if DEV_MODE else 128   # DEV: faster batches
+LSTM_B_BATCH         = 256
 LSTM_B_MAX_EPOCHS    = 200
 LSTM_B_PATIENCE      = 15
 LSTM_B_LR_PATIENCE   = 7
@@ -321,7 +300,7 @@ LSTM_B_VAL_SPLIT     = 0.2
 LSTM_WD              = 1e-5                   # weight decay (both models)
 
 # ── LSTM Hyperparameter Search Grid (Bhandari §3.3) ──────────────────────────
-# Shared by both LSTM-A and LSTM-B for the training hyperparameter search
+# Used by LSTM-B Phase 1 tuning (optimizer / lr / batch_size)
 LSTM_HYPERPARAM_GRID = {
     "optimizer":      ["adam", "adagrad", "nadam"],   # paper tests these three
     "learning_rate":  [0.1, 0.01, 0.001],             # paper tests these three
@@ -386,15 +365,8 @@ XGB_REG_LAMBDA   = 1.0    # L2 regularization
 
 RANDOM_SEED = 42
 
-# =============================================================================
-# DEV MODE — Set False for final thesis run only
-# =============================================================================
-DEV_MODE = True  # When True, skips LSTM-A to reduce runtime
-MODELS_DEV  = ['LR', 'RF', 'XGBoost', 'LSTM-B']
-MODELS_FULL = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
-
-# ── Model registry (after refactor) ──────────────────────────────────────────
-MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
+# ── Model registry ────────────────────────────────────────────────────────────
+MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-B']
 
 LARGE_CAP_CONFIG = UniverseConfig(
     name="large_cap",

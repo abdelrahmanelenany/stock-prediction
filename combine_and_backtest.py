@@ -23,14 +23,12 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     
     print("Combining predictions...")
     full_preds = base_df.copy()
-    full_preds['Prob_LSTM_A'] = lstm_df['Prob_LSTM_A']
     full_preds['Prob_LSTM_B'] = lstm_df['Prob_LSTM_B']
-    
+
     model_cols = {
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
-        'LSTM-A': 'Prob_LSTM_A',
         'LSTM-B': 'Prob_LSTM_B',
     }
 
@@ -42,7 +40,7 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     daily_returns_net_5 = {'Date': None}
 
     print('\n' + '=' * 60)
-    print('BACKTESTING ALL 5 MODELS')
+    print('BACKTESTING ALL MODELS')
     print('=' * 60)
 
     for model_name, prob_col in model_cols.items():
@@ -111,9 +109,9 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     results_net_5 = [compute_metrics(port_returns_net_5[m]['Net_Return']) | {'Model': m} for m in port_returns_net_5]
     
     subperiod_metrics = None
-    if 'LSTM-A' in port_returns_net_5:
+    if 'LSTM-B' in port_returns_net_5:
         try:
-            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM-A']['Net_Return'])
+            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM-B']['Net_Return'])
         except Exception as e:
             print(f'Warning: Could not compute subperiod metrics: {e}')
 

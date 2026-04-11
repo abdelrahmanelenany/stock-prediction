@@ -1,19 +1,13 @@
 """
 main.py — Full pipeline orchestrator
-Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-A, LSTM-B.
+Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-B, Ensemble.
 
-Models after refactor:
-  - LR:      Logistic Regression (baseline) — 6 features
-  - RF:      Random Forest (baseline) — 6 features
-  - XGBoost: XGBoost (baseline) — 6 features
-  - LSTM-A:  Bhandari-inspired (4 technical features, tuned architecture)
-  - LSTM-B:  Extended ablation (6 features, fixed architecture)
-
-Implements Bhandari et al. (2022) extensions:
-  - Dual scalers: separate feature normalization for LSTM-A (4 features) and
-    LSTM-B/baselines (6 features)
-  - Optional LSTM hyperparameter tuning (Phase 1 + Phase 2 for LSTM-A)
-  - Configurable scaler type (standard/minmax)
+Models:
+  - LR:       Logistic Regression (baseline)
+  - RF:       Random Forest (baseline)
+  - XGBoost:  Gradient Boosted Trees (baseline)
+  - LSTM-B:   Primary neural-network model (multi-feature, fixed architecture)
+  - Ensemble: Mean probability across all four models above
 
 Run:
     .venv/bin/python3 main.py
@@ -49,9 +43,8 @@ from pipeline.fold_reporting import save_fold_report
 from evaluation.metrics_utils import binary_auc_safe, classification_sanity_checks, log_split_balance
 from models.baselines import train_logistic, train_random_forest, train_xgboost
 from models.lstm_model import (
-    prepare_lstm_a_sequences, prepare_lstm_b_sequences,
-    prepare_lstm_a_sequences_temporal_split, prepare_lstm_b_sequences_temporal_split,
-    train_lstm_a, train_lstm_b,
+    prepare_lstm_b_sequences_temporal_split,
+    train_lstm_b,
     predict_lstm, align_predictions_to_df,
     tune_lstm_hyperparams,
 )
@@ -70,8 +63,8 @@ import config
 from config import (
     TRAIN_DAYS, VAL_DAYS, TEST_DAYS,
     K_STOCKS, TC_BPS, MODELS,
-    LSTM_A_VAL_SPLIT, LSTM_B_VAL_SPLIT,
-    LSTM_A_FEATURES, LSTM_B_FEATURES,
+    LSTM_B_VAL_SPLIT,
+    LSTM_B_FEATURES,
     BASELINE_FEATURE_COLS,
     SIGNAL_SMOOTH_ALPHA, MIN_HOLDING_DAYS,
     SLIPPAGE_BPS,
@@ -80,8 +73,8 @@ from config import (
     RUN_SIGNAL_ABLATION,
     SAVE_FOLD_REPORTS,
     SIGNAL_EMA_METHOD, SIGNAL_EMA_SPAN,
-    DEV_MODE,
     LARGE_CAP_CONFIG, SMALL_CAP_CONFIG,
+    TARGET_HORIZON_DAYS,
 )
 
 # Whether the active universe inverts signals at portfolio level.
@@ -94,10 +87,8 @@ TARGET_COL = 'Target'
 CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
-ENABLE_LSTM_A_TUNING = False  # Keep False in dev unless explicitly needed.
-
 RUN_BASELINES = True        # Set False to skip LR, RF, XGB
-RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
+RUN_LSTMS = True            # Set False to skip LSTM-B
 
 device = (
     torch.device('cuda') if torch.cuda.is_available()
@@ -108,12 +99,14 @@ print(f'Using device: {device}')
 
 
 def set_global_seed(seed: int):
-    """Set deterministic seeds across Python, NumPy, and PyTorch."""
+    """Set deterministic seeds across Python, NumPy, and PyTorch (including MPS)."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
     # Keep deterministic mode best-effort to avoid runtime failures on unsupported ops.
     try:
@@ -144,7 +137,7 @@ def save_all_results(
             'subperiod': DataFrame of sub-period metrics,
         }
         daily_returns_dict: {
-            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM-A, LSTM-B],
+            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM-B, Ensemble],
             'net_5':  pd.DataFrame same columns,
         }
         signals_dict: pd.DataFrame with all signals
@@ -259,8 +252,6 @@ def run_walk_forward_pipeline(
     reports_dir : str
         Directory for tables and fold reports.
     """
-    lstm_a_dev_mode = getattr(config, 'LSTM_A_DEV_MODE', False)
-    lstm_a_tuning_enabled = ENABLE_LSTM_A_TUNING and not lstm_a_dev_mode
     lstm_b_tuning_enabled = bool(getattr(config, 'LSTM_B_ENABLE_TUNING', False))
     lstm_b_tune_once = bool(getattr(config, 'LSTM_B_TUNE_ON_FIRST_FOLD_ONLY', True))
 
@@ -274,8 +265,6 @@ def run_walk_forward_pipeline(
     print(f"  K (long/short): {config.K_STOCKS} stocks per side")
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
-    print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
-    print(f"LSTM-A Tuning: {'ENABLED' if lstm_a_tuning_enabled else 'DISABLED'}")
     print(f"LSTM-B Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
     print(f"Configured tickers: {len(config.TICKERS)}")
@@ -290,15 +279,35 @@ def run_walk_forward_pipeline(
         data = pd.read_csv(CACHE_FEATURES_PATH, parse_dates=['Date'])
         print(f'Loaded {len(data)} rows, {len(data.columns)} columns.')
 
-        # Backward compatibility: older caches may contain features but not targets.
-        # If enough columns exist, rebuild targets from cached Return_1d and persist.
+        # Backward compatibility: older caches may contain features but not targets,
+        # or may have been built with a different TARGET_HORIZON_DAYS.
+        # Check for the horizon tag embedded in the cache (written below).
+        # Default to 1 so that legacy caches (without the tag) are treated as
+        # having been built with the original 1-day target and are automatically
+        # recomputed when TARGET_HORIZON_DAYS != 1.
+        cached_horizon = 1
+        if '_target_horizon' in data.columns:
+            cached_horizon = int(data['_target_horizon'].iloc[0])
+            data.drop(columns=['_target_horizon'], inplace=True)
+
         missing_target_cols = [c for c in ['Return_NextDay', TARGET_COL] if c not in data.columns]
-        if missing_target_cols:
-            print(f"Cached file missing target columns: {missing_target_cols}")
+        horizon_mismatch = (cached_horizon is not None) and (cached_horizon != TARGET_HORIZON_DAYS)
+
+        if missing_target_cols or horizon_mismatch:
+            if horizon_mismatch:
+                print(
+                    f"[targets] Cache was built with TARGET_HORIZON_DAYS={cached_horizon}, "
+                    f"but config says {TARGET_HORIZON_DAYS}. Recomputing targets..."
+                )
+            else:
+                print(f"Cached file missing target columns: {missing_target_cols}")
             if {'Date', 'Ticker', 'Return_1d'}.issubset(data.columns):
-                print('Recomputing Return_NextDay/Target from cached features...')
-                data = create_targets(data)
+                print(f'Recomputing Return_NextDay/Target (horizon={TARGET_HORIZON_DAYS}d) from cached features...')
+                data = create_targets(data, horizon=TARGET_HORIZON_DAYS)
+                # Tag the cache with the horizon so future loads can detect mismatches.
+                data['_target_horizon'] = TARGET_HORIZON_DAYS
                 data.to_csv(CACHE_FEATURES_PATH, index=False)
+                data.drop(columns=['_target_horizon'], inplace=True)
                 print(f'Repaired and saved cache to {CACHE_FEATURES_PATH}')
             else:
                 raise ValueError(
@@ -309,10 +318,12 @@ def run_walk_forward_pipeline(
     else:
         raw = download_and_save()
         data = build_feature_matrix(raw)
-        data = create_targets(data)
-        # Persist full dataset (features + Return_NextDay + Target) for future cached runs.
+        data = create_targets(data, horizon=TARGET_HORIZON_DAYS)
+        # Tag cache with the horizon used so reloads can detect config changes.
+        data['_target_horizon'] = TARGET_HORIZON_DAYS
         data.to_csv(CACHE_FEATURES_PATH, index=False)
-        print(f'Saved full cache (with targets) to {CACHE_FEATURES_PATH}')
+        data.drop(columns=['_target_horizon'], inplace=True)
+        print(f'Saved full cache (with {TARGET_HORIZON_DAYS}d-horizon targets) to {CACHE_FEATURES_PATH}')
 
     # Verify required columns
     required = FEATURE_COLS + [TARGET_COL, 'Return_NextDay', 'Date', 'Ticker']
@@ -320,18 +331,12 @@ def run_walk_forward_pipeline(
     if missing:
         raise ValueError(f'Missing columns in {os.path.basename(CACHE_FEATURES_PATH)}: {missing}')
 
-    # Verify LSTM-A features are available (4 features)
-    lstm_a_missing = [c for c in LSTM_A_FEATURES if c not in data.columns]
-    if lstm_a_missing:
-        raise ValueError(f'Missing LSTM-A features: {lstm_a_missing}')
-
-    # Verify LSTM-B features are available (6 features)
+    # Verify LSTM-B features are available
     lstm_b_missing = [c for c in LSTM_B_FEATURES if c not in data.columns]
     if lstm_b_missing:
         raise ValueError(f'Missing LSTM-B features: {lstm_b_missing}')
 
     print(f'\nFeature sets:')
-    print(f'  LSTM-A: {LSTM_A_FEATURES} ({len(LSTM_A_FEATURES)} features)')
     print(f'  LSTM-B: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
     print(f'  Baselines (LR/RF/XGB): {BASELINE_FEATURE_COLS} ({len(BASELINE_FEATURE_COLS)} features)')
 
@@ -381,6 +386,7 @@ def run_walk_forward_pipeline(
             tc_bps=TC_BPS,
             k=K_STOCKS,
             slippage_bps=SLIPPAGE_BPS,
+            invert_signals=INVERT_SIGNALS,
         )
         met_val = compute_metrics(port_val['Net_Return'])
         return float(met_val['Sharpe Ratio']), float(met_val['Annualized Return (%)'])
@@ -497,106 +503,14 @@ def run_walk_forward_pipeline(
             print('\n  [Baselines] Skipping LR, RF, XGBoost (RUN_BASELINES=False)')
             lr_m = rf_m = xgb_m = None
 
-        # ── LSTM-A: Bhandari-inspired (4 technical features) ─────────────────
-        probs_a = None
-        keys_te_a = None
         probs_b = None
         keys_te_b = None
-        
+
         if RUN_LSTMS:
-            # Prepare shared data for LSTM models
             df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
             df_test_fold = df_ts.copy()
 
-            # ── LSTM-A: Bhandari-inspired (4 technical features) ─────────────────
-            if not DEV_MODE:
-                t0 = time.time()
-                print('  [LSTM-A]  building sequences & training...')
-
-                # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
-                X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, keys_tr_a, keys_val_a, keys_te_a = \
-                    prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_A_VAL_SPLIT)
-
-                print(f'    LSTM-A sequences: train={len(X_tr_a)}, val={len(X_val_a)}, test={len(X_te_a)}')
-
-                # Optional: hyperparameter tuning for LSTM-A (using temporal val split)
-                best_hp_a = None
-                if lstm_a_dev_mode:
-                    print(
-                        '    [LSTM-A Dev Mode] Skipping Phase 1 + Phase 2 tuning; '
-                        'using fixed config defaults.'
-                    )
-                    print(
-                        f'    [LSTM-A Dev Mode] optimizer={config.LSTM_A_OPTIMIZER} '
-                        f'lr={config.LSTM_A_LR} batch={config.LSTM_A_BATCH} '
-                        f'hidden={config.LSTM_B_HIDDEN_SIZE} layers={config.LSTM_B_NUM_LAYERS} '
-                        f'dropout={config.LSTM_B_DROPOUT}'
-                    )
-                    model_a = train_lstm_a(
-                        X_tr_a, y_tr_a,
-                        X_val_a, y_val_a,
-                        device,
-                        optimizer_name=config.LSTM_A_OPTIMIZER,
-                        lr=config.LSTM_A_LR,
-                        hidden_size=config.LSTM_B_HIDDEN_SIZE,
-                        num_layers=config.LSTM_B_NUM_LAYERS,
-                        dropout=config.LSTM_B_DROPOUT,
-                        batch_size=config.LSTM_A_BATCH,
-                        seed=fold_seed_base + 20,
-                        fold_idx=fold['fold'],
-                    )
-                elif lstm_a_tuning_enabled:
-                    print('    [LSTM-A Tuning] Running Phase 1 + Phase 2...')
-                    best_hp_a = tune_lstm_hyperparams(
-                        X_tr_a, y_tr_a,
-                        X_val_a, y_val_a,
-                        input_size=len(LSTM_A_FEATURES),
-                        device=device,
-                        arch_grid=config.LSTM_A_ARCH_GRID,  # Phase 2 architecture search
-                        seed=fold_seed_base + 10,
-                    )
-                    tuning_results.append({
-                        'fold': fold['fold'],
-                        'model': 'LSTM-A',
-                        **best_hp_a
-                    })
-                    print(f'    [LSTM-A Tuning] Best: {best_hp_a}')
-                    model_a = train_lstm_a(
-                        X_tr_a, y_tr_a,
-                        X_val_a, y_val_a,
-                        device,
-                        optimizer_name=best_hp_a['optimizer'],
-                        lr=best_hp_a['lr'],
-                        hidden_size=best_hp_a['hidden_size'],
-                        num_layers=best_hp_a['num_layers'],
-                        dropout=best_hp_a['dropout'],
-                        batch_size=best_hp_a['batch_size'],
-                        seed=fold_seed_base + 20,
-                        fold_idx=fold['fold'],
-                    )
-                else:
-                    # Train with default hyperparameters when tuning is disabled.
-                    model_a = train_lstm_a(
-                        X_tr_a, y_tr_a,
-                        X_val_a, y_val_a,
-                        device,
-                        seed=fold_seed_base + 20,
-                        fold_idx=fold['fold'],
-                    )
-                print(f'  [LSTM-A]  fit done in {time.time()-t0:.1f}s')
-
-                # LSTM-A inference
-                probs_a = predict_lstm(model_a, X_te_a, device)
-
-                # Free LSTM-A memory before training LSTM-B
-                del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
-                if torch.backends.mps.is_available():
-                    torch.mps.empty_cache()
-            else:
-                print('  [LSTM-A]  skipped (DEV_MODE=True)')
-                probs_a = None
-
-            # ── LSTM-B: Extended feature LSTM with optional tuning ───────────────
+            # ── LSTM-B: Primary neural-network model ─────────────────────────────
             t0 = time.time()
             print('  [LSTM-B]  building sequences & training...')
 
@@ -745,14 +659,13 @@ def run_walk_forward_pipeline(
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
         else:
-            print('\n  [LSTMs]     Skipping LSTM-A and LSTM-B (RUN_LSTMS=False)')
+            print('\n  [LSTMs]     Skipping LSTM-B (RUN_LSTMS=False)')
 
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
         pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
         pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
         pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s)) if RUN_BASELINES else np.nan
-        pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts) if RUN_LSTMS else np.nan
         pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts) if RUN_LSTMS else np.nan
         pred['Fold'] = fold['fold']
 
@@ -778,17 +691,14 @@ def run_walk_forward_pipeline(
             print(f'  Fold report: {path_fr}')
 
         # Report coverage
-        n_lstm_a = pred['Prob_LSTM_A'].notna().sum()
         n_lstm_b = pred['Prob_LSTM_B'].notna().sum()
-        print(f'  Predictions: LR/RF/XGB={len(pred)}, '
-              f'LSTM-A={n_lstm_a}, LSTM-B={n_lstm_b}')
+        print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM-B={n_lstm_b}')
 
         all_preds.append(pred)
 
     # ── Combine folds ─────────────────────────────────────────────────────────
     full_preds = pd.concat(all_preds).reset_index(drop=True)
     print(f'\nTotal predictions: {len(full_preds)}')
-    print(f'  LSTM-A valid: {full_preds["Prob_LSTM_A"].notna().sum()}')
     print(f'  LSTM-B valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
 
     # ── Backtest each model independently ─────────────────────────────────────
@@ -802,8 +712,6 @@ def run_walk_forward_pipeline(
         'XGBoost': 'Prob_XGB',
         'LSTM-B': 'Prob_LSTM_B',
     }
-    if not DEV_MODE:
-        model_cols['LSTM-A'] = 'Prob_LSTM_A'
 
     port_returns_gross = {}
     port_returns_net_5 = {}
@@ -845,9 +753,11 @@ def run_walk_forward_pipeline(
 
         port_gross = compute_portfolio_returns(
             sig_df, tc_bps=0, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+            invert_signals=INVERT_SIGNALS,
         )
         port_net_5 = compute_portfolio_returns(
             sig_df, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+            invert_signals=INVERT_SIGNALS,
         )
 
         if RUN_SIGNAL_ABLATION:
@@ -858,6 +768,7 @@ def run_walk_forward_pipeline(
             sig_raw = apply_holding_period_constraint(sig_raw, min_hold_days=1)
             port_raw = compute_portfolio_returns(
                 sig_raw, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS,
+                invert_signals=INVERT_SIGNALS,
             )
             st_raw = compute_turnover_and_holding_stats(sig_raw, k=K_STOCKS)
             ablation_rows.append({
@@ -940,12 +851,73 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Sub-period analysis (using the best performing model) ─────────────────
+    # ── Ensemble model (mean of all four models) ──────────────────────────────
+    _ens_base_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_B']
+    _ens_avail = [c for c in _ens_base_cols if c in full_preds.columns]
+    if _ens_avail:
+        ens_preds = full_preds.dropna(subset=_ens_avail).copy()
+        ens_preds['Prob_ENS'] = ens_preds[_ens_avail].mean(axis=1)
+        print(f'\n  [Ensemble] built from {_ens_avail} ({len(ens_preds)} rows)')
+
+        smoothed_ens = smooth_probabilities(
+            ens_preds, 'Prob_ENS',
+            alpha=SIGNAL_SMOOTH_ALPHA,
+            ema_method=SIGNAL_EMA_METHOD,
+            ema_span=SIGNAL_EMA_SPAN,
+        )
+        sig_ens, sig_ens_diag = generate_signals(
+            smoothed_ens, k=K_STOCKS, prob_col='Prob_ENS_Smooth',
+            return_diagnostics=True,
+        )
+        sig_ens = apply_holding_period_constraint(sig_ens, min_hold_days=MIN_HOLDING_DAYS)
+        hold_st_ens = compute_turnover_and_holding_stats(sig_ens, k=K_STOCKS)
+        print(f'  [Ensemble] turnover~{hold_st_ens["mean_daily_turnover_half_turns"]:.2f}  '
+              f'avg_hold~{hold_st_ens["avg_holding_period_trading_days"]:.1f}')
+
+        sig_ens['Model'] = 'Ensemble'
+        all_signals.append(sig_ens)
+
+        port_gross_ens = compute_portfolio_returns(sig_ens, tc_bps=0, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS, invert_signals=INVERT_SIGNALS)
+        port_net_ens = compute_portfolio_returns(sig_ens, tc_bps=TC_BPS, k=K_STOCKS, slippage_bps=SLIPPAGE_BPS, invert_signals=INVERT_SIGNALS)
+        port_returns_gross['Ensemble'] = port_gross_ens
+        port_returns_net_5['Ensemble'] = port_net_ens
+
+        m_ens_g = compute_metrics(port_gross_ens['Gross_Return'])
+        m_ens_g['Model'] = 'Ensemble'
+        results_gross.append(m_ens_g)
+
+        m_ens_n = compute_metrics(port_net_ens['Net_Return'])
+        m_ens_n['Model'] = 'Ensemble'
+        results_net_5.append(m_ens_n)
+        print(f'  {"Ensemble":<12}  '
+              f'Sharpe={m_ens_n["Sharpe Ratio"]:>6.3f}  '
+              f'Sortino={m_ens_n["Sortino Ratio"]:>6.3f}  '
+              f'Ann.Ret={m_ens_n["Annualized Return (%)"]:.2f}%  '
+              f'MDD={m_ens_n["Max Drawdown (%)"]:.2f}%')
+
+        cm_ens = evaluate_classification(
+            ens_preds[TARGET_COL].values, ens_preds['Prob_ENS'].values,
+            invert_probs=INVERT_SIGNALS,
+        )
+        daily_auc_ens = compute_daily_auc(ens_preds, 'Prob_ENS', TARGET_COL, invert_probs=INVERT_SIGNALS)
+        cm_ens['Daily AUC (mean)'] = daily_auc_ens['Daily AUC (mean)']
+        cm_ens['Daily AUC (std)'] = daily_auc_ens['Daily AUC (std)']
+        cm_ens['Signals Inverted'] = INVERT_SIGNALS
+        cm_ens['Model'] = 'Ensemble'
+        class_metrics.append(cm_ens)
+
+        if daily_returns_gross['Date'] is not None:
+            daily_returns_gross['Ensemble'] = port_gross_ens.reindex(daily_returns_gross['Date'])['Gross_Return'].values
+            daily_returns_net_5['Ensemble'] = port_net_ens.reindex(daily_returns_net_5['Date'])['Net_Return'].values
+    else:
+        print('\n  [Ensemble] skipped — no base model predictions available')
+
+    # ── Sub-period analysis (LSTM-B as primary model) ─────────────────────────
     subperiod_metrics = None
-    if 'LSTM-A' in port_returns_net_5:
+    if 'LSTM-B' in port_returns_net_5:
         try:
             subperiod_metrics = compute_subperiod_metrics(
-                port_returns_net_5['LSTM-A']['Net_Return']
+                port_returns_net_5['LSTM-B']['Net_Return']
             )
         except Exception as e:
             print(f'Warning: Could not compute sub-period metrics: {e}')

@@ -1,14 +1,12 @@
 """
 models/lstm_model.py
-LSTM-A: Bhandari-inspired technical indicator LSTM (4 features, tuned architecture)
-LSTM-B: Extended ablation — 6 curated features, fixed architecture (64 units, 2 layers)
+LSTM-B: Extended multi-feature LSTM with fixed architecture (64 hidden, 2 layers, 0.2 dropout)
 
-Both models output raw logits (2 classes) — use CrossEntropyLoss in training.
+Outputs raw logits (2 classes) — use CrossEntropyLoss in training.
 Inference applies softmax to get class probabilities.
 
-Implements Bhandari §3.3 hyperparameter tuning (Section 1 of IMPLEMENTATION_EXTENSIONS.md):
-- Phase 1: tune optimizer, learning rate, batch size
-- Phase 2 (LSTM-A only): tune architecture (hidden_size, num_layers, dropout)
+Implements Bhandari §3.3 Phase 1 hyperparameter tuning for LSTM-B
+(optimizer, learning rate, batch size search on validation AUC).
 """
 import itertools
 import logging
@@ -104,7 +102,8 @@ def _run_tuning_replicates(
         optimizer = _build_optimizer(model, opt_name, lr)
         criterion = nn.CrossEntropyLoss()
 
-        best_val_loss, patience_ctr = float("inf"), 0
+        best_val_auc_rep, patience_ctr = float("-inf"), 0
+        best_state_rep = None
         for epoch in range(max_epochs):
             model.train()
             for Xb, yb in train_dl:
@@ -115,35 +114,36 @@ def _run_tuning_replicates(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step()
 
+            # Evaluate AUC on validation set each epoch
             model.eval()
-            val_loss = 0.0
+            all_preds_ep, all_labels_ep = [], []
             with torch.no_grad():
                 for Xb, yb in val_dl:
-                    val_loss += criterion(model(Xb.to(device)), yb.to(device)).item()
-            val_loss /= max(len(val_dl), 1)
+                    logits = model(Xb.to(device))
+                    probs = torch.softmax(logits, dim=1)[:, 1]
+                    all_preds_ep.extend(probs.cpu().numpy())
+                    all_labels_ep.extend(yb.numpy())
 
-            if val_loss < best_val_loss:
-                best_val_loss, patience_ctr = val_loss, 0
+            if len(set(all_labels_ep)) > 1:
+                ep_auc = roc_auc_score(all_labels_ep, all_preds_ep)
+            else:
+                ep_auc = 0.5
+
+            if ep_auc > best_val_auc_rep:
+                best_val_auc_rep = ep_auc
+                best_state_rep = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                patience_ctr = 0
             else:
                 patience_ctr += 1
                 if patience_ctr >= patience:
                     break
 
-        # Compute AUC on validation set
-        model.eval()
-        all_preds, all_labels = [], []
-        with torch.no_grad():
-            for Xb, yb in val_dl:
-                logits = model(Xb.to(device))
-                probs = torch.softmax(logits, dim=1)[:, 1]
-                all_preds.extend(probs.cpu().numpy())
-                all_labels.extend(yb.numpy())
+        # Restore best-AUC epoch weights before scoring
+        if best_state_rep is not None:
+            model.load_state_dict(best_state_rep)
+            model.to(device)
 
-        if len(set(all_labels)) > 1:
-            auc = roc_auc_score(all_labels, all_preds)
-        else:
-            auc = 0.5
-        auc_scores.append(auc)
+        auc_scores.append(best_val_auc_rep if best_val_auc_rep > float("-inf") else 0.5)
 
     return auc_scores
 
@@ -169,8 +169,7 @@ def tune_lstm_hyperparams(
              This mirrors Bhandari Algorithm 2, which tunes architecture after fixing
              the training hyperparameters.
 
-    LSTM-A calls this function with arch_grid=config.LSTM_A_ARCH_GRID.
-    LSTM-B calls this function with arch_grid=None (architecture stays fixed).
+    LSTM-B calls this function with arch_grid=None (Phase 1 only, architecture stays fixed).
 
     Parameters
     ----------
@@ -251,7 +250,7 @@ def tune_lstm_hyperparams(
             "dropout": seed_dropout,
         }
 
-    # ── Phase 2: tune architecture (LSTM-A only) ──────────────────────────────
+    # ── Phase 2: tune architecture (optional, controlled by arch_grid) ──────────
     arch_combos = list(itertools.product(
         arch_grid["hidden_size"], arch_grid["num_layers"], arch_grid["dropout"]
     ))
@@ -293,36 +292,6 @@ def tune_lstm_hyperparams(
 # ────────────────────────────────────────────────────────────────────────────
 # Sequence Building Functions
 # ────────────────────────────────────────────────────────────────────────────
-
-def _build_sequences(df: pd.DataFrame, seq_len: int, feature_col: str):
-    """
-    Constructs overlapping sequences per ticker for single-feature input.
-    df must have columns: [Date, Ticker, {feature_col}, Target]
-    sorted by [Ticker, Date] ascending.
-
-    Returns:
-        X: np.array shape (N, seq_len, 1)
-        y: np.array shape (N,)
-        keys: list of (date, ticker) tuples for alignment
-    """
-    X_list, y_list, keys = [], [], []
-    for ticker, grp in df.sort_values(['Ticker', 'Date']).groupby('Ticker'):
-        grp = grp.reset_index(drop=True)
-        vals = grp[feature_col].values
-        labels = grp['Target'].values
-        dates = grp['Date'].values
-        for i in range(seq_len, len(vals)):
-            X_list.append(vals[i - seq_len:i])
-            y_list.append(labels[i])
-            keys.append((dates[i], ticker))
-    if len(X_list) == 0:
-        # No sequences could be built (not enough data points per ticker)
-        X = np.zeros((0, seq_len, 1), dtype=np.float32)
-        y = np.zeros((0,), dtype=np.int64)
-        return X, y, keys
-    X = np.array(X_list)[:, :, np.newaxis].astype(np.float32)  # (N, seq_len, 1)
-    y = np.array(y_list).astype(np.int64)
-    return X, y, keys
 
 
 def _build_sequences_multi(df: pd.DataFrame, seq_len: int, feature_cols: list):
@@ -395,90 +364,6 @@ def _build_sequences_multi_with_lookback(df_combined: pd.DataFrame, seq_len: int
     return X, y, keys
 
 
-def _build_sequences_with_lookback(df_combined: pd.DataFrame, seq_len: int,
-                                    feature_col: str, test_dates: set):
-    """
-    Build sequences from combined train+test data, but only output sequences
-    where the target day is in test_dates. This allows using training data
-    as lookback history for test predictions.
-
-    Args:
-        df_combined: DataFrame with train+test data, sorted by [Ticker, Date]
-        seq_len: lookback window length
-        feature_col: column name for the feature
-        test_dates: set of dates (as strings or Timestamps) that define the test period
-
-    Returns:
-        X, y, keys for test period only
-    """
-    X_list, y_list, keys = [], [], []
-    for ticker, grp in df_combined.sort_values(['Ticker', 'Date']).groupby('Ticker'):
-        grp = grp.reset_index(drop=True)
-        vals = grp[feature_col].values
-        labels = grp['Target'].values
-        dates = grp['Date'].values
-        for i in range(seq_len, len(vals)):
-            date_str = pd.Timestamp(dates[i]).strftime('%Y-%m-%d')
-            # Only include if target day is in test period
-            if date_str in test_dates:
-                X_list.append(vals[i - seq_len:i])
-                y_list.append(labels[i])
-                keys.append((dates[i], ticker))
-
-    if len(X_list) == 0:
-        X = np.zeros((0, seq_len, 1), dtype=np.float32)
-        y = np.zeros((0,), dtype=np.int64)
-        return X, y, keys
-    X = np.array(X_list)[:, :, np.newaxis].astype(np.float32)
-    y = np.array(y_list).astype(np.int64)
-    return X, y, keys
-
-
-def prepare_lstm_a_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
-    """
-    Builds overlapping multi-feature sequences for LSTM-A.
-    Uses 4 features: MACD, RSI_14, ATR_14, Return_1d (Bhandari §4.3 inspired).
-
-    Standardization is fit on training data ONLY, then applied to both splits.
-
-    For test sequences, training data is used as lookback history so that
-    predictions can be made even when test period < seq_len.
-
-    Args:
-        df_train: DataFrame with columns [Date, Ticker, *LSTM_A_FEATURES, Target]
-        df_test:  DataFrame with same columns
-
-    Returns:
-        X_train: np.array shape (N_train, seq_len, n_feat)
-        y_train: np.array shape (N_train,)
-        X_test:  np.array shape (N_test, seq_len, n_feat)
-        y_test:  np.array shape (N_test,)
-        keys_train: list of (date, ticker)
-        keys_test:  list of (date, ticker)
-    """
-    seq_len = config.LSTM_A_SEQ_LEN
-    feature_cols = config.LSTM_A_FEATURES  # 4 features
-
-    # Fit scaler on training data only
-    scaler = StandardScaler()
-    scaler.fit(df_train[feature_cols].values)
-
-    df_train = df_train.copy()
-    df_test = df_test.copy()
-    df_train[feature_cols] = scaler.transform(df_train[feature_cols].values)
-    df_test[feature_cols] = scaler.transform(df_test[feature_cols].values)
-
-    # Build training sequences from train data only
-    X_train, y_train, keys_train = _build_sequences_multi(df_train, seq_len, feature_cols)
-
-    # Build test sequences using train data as lookback history
-    test_dates = set(df_test['Date'].apply(lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')))
-    df_combined = pd.concat([df_train, df_test], ignore_index=True)
-    X_test, y_test, keys_test = _build_sequences_multi_with_lookback(
-        df_combined, seq_len, feature_cols, test_dates
-    )
-
-    return X_train, y_train, X_test, y_test, keys_train, keys_test
 
 
 def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
@@ -525,81 +410,6 @@ def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
 
     return X_train, y_train, X_test, y_test, keys_train, keys_test
 
-
-def prepare_lstm_a_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
-                                             val_ratio: float = 0.2):
-    """
-    Build LSTM-A sequences with TEMPORAL train/val split.
-
-    FIX: Instead of splitting by index (which splits by ticker), this function
-    splits by DATE - the last val_ratio of training DATES become validation.
-
-    Args:
-        df_train: DataFrame with columns [Date, Ticker, *LSTM_A_FEATURES, Target]
-        df_test:  DataFrame with same columns
-        val_ratio: Fraction of training dates to use for validation (default 0.2)
-
-    Returns:
-        X_train, y_train: Training sequences
-        X_val, y_val: Validation sequences (last 20% of dates)
-        X_test, y_test: Test sequences
-        keys_train, keys_val, keys_test: (date, ticker) tuples for alignment
-    """
-    seq_len = config.LSTM_A_SEQ_LEN
-    feature_cols = config.LSTM_A_FEATURES
-
-    # Split training dates temporally
-    train_dates_sorted = sorted(df_train['Date'].unique())
-    n_dates = len(train_dates_sorted)
-    val_start_idx = int(n_dates * (1 - val_ratio))
-
-    train_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
-                         for d in train_dates_sorted[:val_start_idx])
-    val_date_set = set(pd.Timestamp(d).strftime('%Y-%m-%d')
-                       for d in train_dates_sorted[val_start_idx:])
-
-    # Fit scaler on TRUE training data only (excluding validation dates)
-    df_true_train = df_train[df_train['Date'].isin(train_dates_sorted[:val_start_idx])]
-    scaler = StandardScaler()
-    scaler.fit(df_true_train[feature_cols].values)
-
-    # Apply scaler to all data
-    df_train = df_train.copy()
-    df_test = df_test.copy()
-    df_train[feature_cols] = scaler.transform(df_train[feature_cols].values)
-    df_test[feature_cols] = scaler.transform(df_test[feature_cols].values)
-
-    # Build ALL sequences from training data
-    X_all, y_all, keys_all = _build_sequences_multi(df_train, seq_len, feature_cols)
-
-    # Split sequences by DATE (not by index!)
-    X_train_list, y_train_list, keys_train = [], [], []
-    X_val_list, y_val_list, keys_val = [], [], []
-
-    for i, (date, ticker) in enumerate(keys_all):
-        date_str = pd.Timestamp(date).strftime('%Y-%m-%d')
-        if date_str in train_date_set:
-            X_train_list.append(X_all[i])
-            y_train_list.append(y_all[i])
-            keys_train.append((date, ticker))
-        elif date_str in val_date_set:
-            X_val_list.append(X_all[i])
-            y_val_list.append(y_all[i])
-            keys_val.append((date, ticker))
-
-    X_train = np.array(X_train_list, dtype=np.float32) if X_train_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
-    y_train = np.array(y_train_list, dtype=np.int64) if y_train_list else np.zeros(0, dtype=np.int64)
-    X_val = np.array(X_val_list, dtype=np.float32) if X_val_list else np.zeros((0, seq_len, len(feature_cols)), dtype=np.float32)
-    y_val = np.array(y_val_list, dtype=np.int64) if y_val_list else np.zeros(0, dtype=np.int64)
-
-    # Build test sequences using full train data as lookback history
-    test_dates = set(df_test['Date'].apply(lambda d: pd.Timestamp(d).strftime('%Y-%m-%d')))
-    df_combined = pd.concat([df_train, df_test], ignore_index=True)
-    X_test, y_test, keys_test = _build_sequences_multi_with_lookback(
-        df_combined, seq_len, feature_cols, test_dates
-    )
-
-    return X_train, y_train, X_val, y_val, X_test, y_test, keys_train, keys_val, keys_test
 
 
 def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
@@ -685,17 +495,16 @@ def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.
 
 class StockLSTMTunable(nn.Module):
     """
-    Flexible LSTM architecture for hyperparameter tuning.
+    Flexible LSTM architecture used during hyperparameter tuning replicates.
     All architecture parameters are configurable via constructor.
-    Used for both LSTM-A (tuned) and LSTM-B (fixed architecture).
     Outputs logits for 2 classes.
     """
     def __init__(
         self,
-        input_size: int,        # 4 for LSTM-A, 6 for LSTM-B
-        hidden_size: int = 64,  # tuner-resolved for LSTM-A; fixed 64 for LSTM-B
-        num_layers: int = 2,    # tuner-resolved for LSTM-A; fixed 2 for LSTM-B
-        dropout: float = 0.2,   # tuner-resolved for LSTM-A; fixed 0.2 for LSTM-B
+        input_size: int,
+        hidden_size: int = 64,
+        num_layers: int = 2,
+        dropout: float = 0.2,
     ):
         super().__init__()
         self.lstm = nn.LSTM(
@@ -707,52 +516,20 @@ class StockLSTMTunable(nn.Module):
             batch_first=True,
         )
         self.dropout = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(hidden_size, 16)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(16, 2)
+        self.fc = nn.Linear(hidden_size, 2)
 
     def forward(self, x):
         out, _ = self.lstm(x)
         out = self.dropout(out[:, -1, :])  # take last timestep
-        out = self.relu(self.fc1(out))
-        return self.fc2(out)  # logits for 2 classes
+        return self.fc(out)  # logits for 2 classes
 
-
-class LSTMModelA(nn.Module):
-    """
-    LSTM-A: Bhandari-inspired technical indicator LSTM.
-    4 features (MACD, RSI, ATR, Return_1d), architecture from hyperparameter tuning.
-    Outputs logits for 2 classes.
-    """
-    def __init__(self, hidden_size=None, num_layers=None, dropout=None):
-        super().__init__()
-        n_feat = len(config.LSTM_A_FEATURES)
-        # Use tuned values if provided, otherwise use first value from grid
-        hidden = hidden_size if hidden_size else config.LSTM_A_ARCH_GRID["hidden_size"][0]
-        layers = num_layers if num_layers else config.LSTM_A_ARCH_GRID["num_layers"][0]
-        drop = dropout if dropout else config.LSTM_A_ARCH_GRID["dropout"][0]
-
-        self.lstm = nn.LSTM(
-            input_size=n_feat,
-            hidden_size=hidden,
-            num_layers=layers,
-            dropout=drop if layers > 1 else 0.0,
-            batch_first=True,
-        )
-        self.dropout = nn.Dropout(drop)
-        self.fc1 = nn.Linear(hidden, 16)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(16, 2)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = self.dropout(out[:, -1, :])
-        return self.fc2(self.relu(self.fc1(out)))
 
 
 class LSTMModelB(nn.Module):
     """
-    Extended LSTM with 6 input features, 2 layers.
+    LSTM-B: Primary neural-network model with multi-feature input.
+    Architecture: 32 hidden units, 1 layer, no dropout (empirically best).
+    Single linear decoder (hidden→2).
     Outputs logits for 2 classes.
     """
     def __init__(self, hidden_size=None, num_layers=None, dropout=None, input_size=None):
@@ -852,7 +629,7 @@ def _train_lstm_impl(
     )
 
     if batch_size is None:
-        batch_size = config.LSTM_A_BATCH if desc == "LSTM-A" else config.LSTM_B_BATCH
+        batch_size = config.LSTM_B_BATCH
 
     if seed is None:
         seed = config.RANDOM_SEED
@@ -1036,92 +813,6 @@ def _train_lstm_impl(
     return model
 
 
-def train_lstm_a(
-    X_train,
-    y_train,
-    X_val,
-    y_val,
-    device,
-    optimizer_name=None,
-    lr=None,
-    hidden_size=None,
-    num_layers=None,
-    dropout=None,
-    batch_size=None,
-    seed=None,
-    fold_idx: int | None = None,
-):
-    """
-    Trains LSTM-A using specified or default hyperparameters.
-    Returns trained model with best validation loss weights restored.
-    Falls back to CPU if MPS runs out of memory.
-
-    Parameters
-    ----------
-    optimizer_name : str, optional
-        Optimizer name ('adam', 'adagrad', 'nadam'). Defaults to config value.
-    lr : float, optional
-        Learning rate. Defaults to config value.
-    hidden_size, num_layers, dropout : int/float, optional
-        Architecture params. Defaults to first value in arch grid.
-    batch_size : int, optional
-        Batch size. Defaults to config value.
-    """
-    _clear_mps_cache()
-
-    # Use tuned or default values
-    opt_name = optimizer_name or config.LSTM_A_OPTIMIZER
-    learning_rate = lr or config.LSTM_A_LR
-    bs = batch_size or config.LSTM_A_BATCH
-    h_size = hidden_size or config.LSTM_A_ARCH_GRID["hidden_size"][0]
-    n_layers = num_layers or config.LSTM_A_ARCH_GRID["num_layers"][0]
-    drop = dropout or config.LSTM_A_ARCH_GRID["dropout"][0]
-
-    n_feat = len(config.LSTM_A_FEATURES)
-    train_seed = config.RANDOM_SEED if seed is None else seed
-    _seed_everything(train_seed)
-
-    # Try with the given device first
-    try:
-        model = StockLSTMTunable(
-            input_size=n_feat,
-            hidden_size=h_size,
-            num_layers=n_layers,
-            dropout=drop,
-        ).to(device)
-
-        optimizer = _build_optimizer(model, opt_name, learning_rate)
-        criterion = nn.CrossEntropyLoss()
-
-        return _train_lstm_impl(
-            model, X_train, y_train, X_val, y_val, device,
-            optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-            config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed,
-            lr_scheduler=None, fold_idx=fold_idx,
-        )
-    except RuntimeError as e:
-        if "out of memory" in str(e).lower() or "MPS" in str(e):
-            print(f"  [LSTM-A] MPS out of memory, falling back to CPU...")
-            _clear_mps_cache()
-            cpu_device = torch.device('cpu')
-            model = StockLSTMTunable(
-                input_size=n_feat,
-                hidden_size=h_size,
-                num_layers=n_layers,
-                dropout=drop,
-            ).to(cpu_device)
-
-            optimizer = _build_optimizer(model, opt_name, learning_rate)
-            criterion = nn.CrossEntropyLoss()
-
-            return _train_lstm_impl(
-                model, X_train, y_train, X_val, y_val, cpu_device,
-                optimizer, criterion, config.LSTM_A_MAX_EPOCHS,
-                config.LSTM_A_PATIENCE, "LSTM-A", bs, seed=train_seed,
-                lr_scheduler=None, fold_idx=fold_idx,
-            )
-        raise
-
 
 def _train_lstm_b_impl(
     model,
@@ -1240,7 +931,7 @@ def predict_lstm(model, X: np.ndarray, device=None) -> np.ndarray:
     Uses batched inference for memory efficiency.
 
     Args:
-        model: trained LSTMModelA or LSTMModelB
+        model: trained LSTMModelB (or StockLSTMTunable during tuning)
         X: np.array of sequences
         device: torch device (if None, uses model's current device)
 
@@ -1281,7 +972,6 @@ def align_predictions_to_df(probs: np.ndarray, keys: list, df: pd.DataFrame) -> 
     Returns:
         np.array aligned to df rows (NaN where no prediction)
     """
-    # If a model was intentionally skipped (e.g., DEV mode), keep alignment safe.
     if probs is None or keys is None:
         return np.full(len(df), np.nan)
 
