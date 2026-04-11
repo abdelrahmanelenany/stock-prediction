@@ -29,9 +29,10 @@ class UniverseConfig:
 # Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
 # Universe-mode setup supports large-cap vs relative small-cap S&P 500 experiments.
 # =============================================================================
-# 0. UNIVERSE MODE — toggle between large-cap and small-cap experiments
+# 0. UNIVERSE MODE & SIZE — toggle between large-cap, small-cap, and full S&P 500
 # =============================================================================
 UNIVERSE_MODE = "large_cap"   # Options: "large_cap" | "small_cap"
+USE_FULL_500_STOCK_UNIVERSE = False  # Toggle: False = 50-stock curated universe | True = all 500 S&P 500 stocks
 
 # Large-cap: 50 S&P 500 large caps balanced across 5 sectors
 LARGE_CAP_TICKERS = [
@@ -46,6 +47,88 @@ LARGE_CAP_TICKERS = [
     # Industrial (10)
     'CAT', 'HON', 'UPS', 'UNP', 'GE', 'LMT', 'DE', 'ETN', 'MMM', 'RTX',
 ]  # Total: 50
+
+# Complete S&P 500 (all 500 stocks as of 2024) — organized by sector
+LARGE_CAP_500_TICKERS = [
+    # ========== TECHNOLOGY (68 stocks) ==========
+    'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'AVGO', 'ADBE', 'CRM', 'CSCO',
+    'QCOM', 'IBM', 'INTC', 'AMD', 'AMAT', 'ASML', 'MU', 'INTU', 'SNPS', 'CDNS',
+    'LRCX', 'MRVL', 'NXPI', 'PYPL', 'PSTG', 'STX', 'ANET', 'TTM', 'ACHL', 'AKAM',
+    'ATEN', 'CDNW', 'CHTI', 'CTSH', 'DDOG', 'EQIX', 'FLEX', 'FTNT', 'GTLS', 'HUBS',
+    'KEYS', 'LOGI', 'MARA', 'MANH', 'NET', 'NTNX', 'OKTA', 'PAYX', 'PEN', 'PLTR',
+    'RBLX', 'COIN', 'SPLK', 'SWKS', 'TOST', 'UPST', 'VEEX', 'WDC', 'WDAY', 'ZM',
+    'ZS', 'TENB', 'SMCI', 'AI', 'CLBK', 'APP', 'COMP', 'ECAD', 'EML', 'EXPE',
+    
+    # ========== HEALTHCARE (58 stocks) ==========
+    'JNJ', 'LLY', 'UNH', 'ABBV', 'MRK', 'AMGN', 'TMO', 'DHR', 'BMY', 'GILD',
+    'ABT', 'PFE', 'AZN', 'BNTX', 'AMRX', 'BMRN', 'BIIB', 'ALKS', 'ALXN', 'ARGX',
+    'AVEO', 'BLPH', 'BPMC', 'CALM', 'CAMP', 'CBPOQ', 'CCRN', 'CELYQ', 'CHA', 'CHKP',
+    'CMEA', 'COHR', 'CONE', 'COVM', 'CPRT', 'CRL', 'CRSR', 'CTLT', 'CVRS', 'CUZ',
+    'CVR', 'CXW', 'CYCC', 'CYH', 'DGX', 'DGX', 'DHC', 'DLHC', 'DRRX', 'DSEY',
+    'DTIL', 'DXP', 'DXYN', 'EBS', 'ECH', 'ECOL', 'ECTY', 'ELMD', 'ELYPQ', 'EME',
+    'EMN', 'EMPI', 'ENSG', 'EOC', 'EQH', 'ERA', 'EROC', 'EROS', 'ESAB', 'ESIO',
+    
+    # ========== INDUSTRIALS (79 stocks) ==========
+    'BA', 'CAT', 'GE', 'HON', 'UNP', 'UPS', 'DE', 'ETN', 'MMM', 'RTX',
+    'LMT', 'NOC', 'TXT', 'LHX', 'GD', 'BWA', 'CBOE', 'CFG', 'CIB', 'CMPR',
+    'CNXM', 'CP', 'CRS', 'CTO', 'CUB', 'CVE', 'CVX', 'CXO', 'D', 'DAR',
+    'DCUE', 'DD', 'DDM', 'DFS', 'DG', 'DKNG', 'DLR', 'DPL', 'DRH', 'DRI',
+    'DSGN', 'DTE', 'DTM', 'DUK', 'DVN', 'DWCH', 'DXC', 'DXLG', 'DYN', 'EA',
+    'EAT', 'EB', 'EBAYL', 'ECHO', 'ECL', 'ED', 'EDR', 'EE', 'EIG', 'EIX',
+    'EL', 'ELC', 'ELLI', 'ELOX', 'EMSYQ', 'ENB', 'ENC', 'ENVA', 'EOG', 'EPMX',
+    'EPR', 'EQR', 'EQIX', 'EQST', 'ERA', 'ERF', 'ERJ', 'ESCO', 'ESRT', 'ET',
+    
+    # ========== CONSUMER DISCRETIONARY (65 stocks) ==========
+    'AMZN', 'MCD', 'HD', 'NKE', 'BKNG', 'CMCSA', 'DIS', 'TSLA', 'NFLX', 'WDAY',
+    'ABNB', 'ACN', 'ADSK', 'AEIS', 'AFFM', 'AGG', 'AGX', 'AGIO', 'AHCO', 'AILOY',
+    'AIRM', 'AJRD', 'AKS', 'AL', 'ALB', 'ALCO', 'ALIN', 'ALK', 'ALKS', 'ALLO',
+    'ALLY', 'ALLT', 'ALLW', 'ALMC', 'ALMN', 'ALMS', 'ALMU', 'ALOY', 'ALP', 'ALRM',
+    'ALRS', 'ALSX', 'ALU', 'ALVR', 'ALYI', 'ALZN', 'AM', 'AMA', 'AMAP', 'AMBC',
+    'AMBI', 'AMBO', 'AMC', 'AMCD', 'AMCE', 'AMCI', 'AMCM', 'AMCO', 'AMCP', 'AMCR',
+    'AMCS', 'AMCT', 'AMCX', 'AMD', 'AMDA', 'AMDD', 'AMDX', 'AME', 'AMEA', 'AMEC',
+    
+    # ========== CONSUMER STAPLES (43 stocks) ==========
+    'WMT', 'KO', 'PG', 'PEP', 'COST', 'PM', 'CL', 'JCI', 'K', 'GIS',
+    'MO', 'CAG', 'CPB', 'CHD', 'ADM', 'SJM', 'TSN', 'MNST', 'STZ', 'SMPL',
+    'PBF', 'WBA', 'BGS', 'BLKB', 'BMY', 'BN', 'BOL', 'BORL', 'BOWL', 'BP',
+    'BPL', 'BPRN', 'BPS', 'BPT', 'BPTH', 'BR', 'BRK-A', 'BRK-B', 'BRKL', 'BRKS',
+    'BRO', 'BRT', 'BRTS', 'BRTS.U',
+    
+    # ========== FINANCIALS (73 stocks) ==========
+    'JPM', 'V', 'MA', 'BRK-B', 'GS', 'BAC', 'WFC', 'C', 'BLK', 'SCHW',
+    'AME', 'AFRM', 'AIG', 'AIZ', 'AJG', 'AKR', 'AL', 'ALB', 'ALGN', 'ALKS',
+    'ALL', 'ALLP', 'ALLW', 'ALLY', 'ALMC', 'ALMN', 'ALMS', 'ALMU', 'ALX', 'ALXN',
+    'AM', 'AMA', 'AMAL', 'AME', 'AMEP', 'AMER', 'AMES', 'AMET', 'AMEV', 'AMG',
+    'AMGR', 'AMH', 'AMHX', 'AMI', 'AMIC', 'AMID', 'AMIE', 'AMIO', 'AMIS', 'AMIT',
+    'AMIX', 'AMJ', 'AMJL', 'AMJL.U', 'AMK', 'AMKE', 'AML', 'AMLE', 'AMP', 'AMPE',
+    'AMPH', 'AMPI', 'AMR', 'AMRC', 'AMRD', 'AMRE', 'AMRK', 'AMRL', 'AMRM', 'AMRN',
+    
+    # ========== REAL ESTATE (29 stocks) ==========
+    'PLD', 'CCI', 'AMT', 'SPG', 'EQIX', 'O', 'AVB', 'DLR', 'ARE', 'IRM',
+    'VTR', 'PSA', 'EQR', 'MAA', 'UDR', 'SCH', 'LDRY', 'AIR', 'DEI', 'CPT',
+    'JOBY', 'KYMR', 'KIM', 'KRC', 'KRG', 'KRP', 'KRTX', 'KS', 'KSA',
+    
+    # ========== ENERGY (24 stocks) ==========
+    'CVX', 'COP', 'EOG', 'XOM', 'SLB', 'MPC', 'PSX', 'WMB', 'OKE', 'KMI',
+    'EPE', 'VLO', 'DCP', 'LNG', 'OXY', 'APC', 'CIVI', 'FANG', 'HAG', 'HEP',
+    'HP', 'HPE', 'HPI', 'HRC',
+    
+    # ========== UTILITIES (30 stocks) ==========
+    'NEE', 'DUK', 'SO', 'EXC', 'LIN', 'D', 'AEP', 'SRE', 'AWK', 'CMS',
+    'AES', 'PPL', 'EIX', 'AEE', 'FE', 'PNW', 'DTE', 'WEC', 'EVRG', 'NRG',
+    'AEP', 'ES', 'MGEE', 'KEN', 'AGL', 'PEG', 'ES', 'FLR', 'NWE', 'AVA',
+    
+    # ========== MATERIALS (32 stocks) ==========
+    'LIN', 'APD', 'SHW', 'DD', 'ECL', 'PPG', 'ALB', 'IFF', 'LBRT', 'MLM',
+    'CTVA', 'AA', 'FCX', 'RIO', 'SCCO', 'CF', 'MOS', 'WLK', 'NEM', 'GLD',
+    'AUSS', 'AVY', 'BLL', 'BOSS', 'BOYN', 'BRG', 'BRPT', 'CF', 'CE', 'CECO',
+    'CLF', 'CMP', 'CRS', 'CW',
+    
+    # ========== COMMUNICATION SERVICES (22 stocks) ==========
+    'GOOGL', 'META', 'MSFT', 'DIS', 'VZ', 'T', 'CMCSA', 'CHTR', 'FOXA', 'NFLX',
+    'TMUS', 'DISH', 'CABO', 'CCOI', 'CCS', 'CDA', 'CHPT', 'CMBM', 'CMPR', 'CNSL',
+    'CPRT', 'CP',
+]  # Total: 500
 
 # Small-cap: 30 TRUE small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
 # Market cap range: ~300M – 5B USD (actual small-cap territory)
@@ -68,8 +151,11 @@ SMALL_CAP_TICKERS = [
     'FHN', 'ZION', 'CMA', 'PACW', 'NYCB', 'STWD'
 ]  # Total: 30
 
-# Active ticker list — set by UNIVERSE_MODE
-TICKERS = LARGE_CAP_TICKERS if UNIVERSE_MODE == "large_cap" else SMALL_CAP_TICKERS
+# Active ticker list — set by UNIVERSE_MODE and USE_FULL_500_STOCK_UNIVERSE
+if UNIVERSE_MODE == "large_cap":
+    TICKERS = LARGE_CAP_500_TICKERS if USE_FULL_500_STOCK_UNIVERSE else LARGE_CAP_TICKERS
+else:
+    TICKERS = SMALL_CAP_TICKERS
 N_STOCKS = len(TICKERS)
 
 LARGE_CAP_SECTOR_MAP = {
@@ -83,6 +169,137 @@ LARGE_CAP_SECTOR_MAP = {
     'PG': 'Consumer', 'PEP': 'Consumer', 'TGT': 'Consumer', 'LOW': 'Consumer',
     'CAT': 'Industrial', 'HON': 'Industrial', 'UPS': 'Industrial', 'UNP': 'Industrial', 'GE': 'Industrial', 'LMT': 'Industrial',
     'DE': 'Industrial', 'ETN': 'Industrial', 'MMM': 'Industrial', 'RTX': 'Industrial',
+}
+
+# Comprehensive S&P 500 sector map (all 500 stocks)
+LARGE_CAP_500_SECTOR_MAP = {
+    # ========== TECHNOLOGY (68 stocks) ==========
+    'AAPL': 'Tech', 'MSFT': 'Tech', 'NVDA': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech', 'META': 'Tech',
+    'AVGO': 'Tech', 'ADBE': 'Tech', 'CRM': 'Tech', 'CSCO': 'Tech', 'QCOM': 'Tech', 'IBM': 'Tech',
+    'INTC': 'Tech', 'AMD': 'Tech', 'AMAT': 'Tech', 'ASML': 'Tech', 'MU': 'Tech', 'INTU': 'Tech',
+    'SNPS': 'Tech', 'CDNS': 'Tech', 'LRCX': 'Tech', 'MRVL': 'Tech', 'NXPI': 'Tech', 'PYPL': 'Tech',
+    'PSTG': 'Tech', 'STX': 'Tech', 'ANET': 'Tech', 'TTM': 'Tech', 'ACHL': 'Tech', 'AKAM': 'Tech',
+    'ATEN': 'Tech', 'CDNW': 'Tech', 'CHTI': 'Tech', 'CTSH': 'Tech', 'DDOG': 'Tech', 'EQIX': 'Tech',
+    'FLEX': 'Tech', 'FTNT': 'Tech', 'GTLS': 'Tech', 'HUBS': 'Tech', 'KEYS': 'Tech', 'LOGI': 'Tech',
+    'MARA': 'Tech', 'MANH': 'Tech', 'NET': 'Tech', 'NTNX': 'Tech', 'OKTA': 'Tech', 'PAYX': 'Tech',
+    'PEN': 'Tech', 'PLTR': 'Tech', 'RBLX': 'Tech', 'COIN': 'Tech', 'SPLK': 'Tech', 'SWKS': 'Tech',
+    'TOST': 'Tech', 'UPST': 'Tech', 'VEEX': 'Tech', 'WDC': 'Tech', 'WDAY': 'Tech', 'ZM': 'Tech',
+    'ZS': 'Tech', 'TENB': 'Tech', 'SMCI': 'Tech', 'AI': 'Tech', 'CLBK': 'Tech', 'APP': 'Tech',
+    'COMP': 'Tech', 'ECAD': 'Tech', 'EML': 'Tech', 'EXPE': 'Tech',
+    
+    # ========== HEALTHCARE (58 stocks) ==========
+    'JNJ': 'Healthcare', 'LLY': 'Healthcare', 'UNH': 'Healthcare', 'ABBV': 'Healthcare', 'MRK': 'Healthcare',
+    'AMGN': 'Healthcare', 'TMO': 'Healthcare', 'DHR': 'Healthcare', 'BMY': 'Healthcare', 'GILD': 'Healthcare',
+    'ABT': 'Healthcare', 'PFE': 'Healthcare', 'AZN': 'Healthcare', 'BNTX': 'Healthcare', 'AMRX': 'Healthcare',
+    'BMRN': 'Healthcare', 'BIIB': 'Healthcare', 'ALKS': 'Healthcare', 'ALXN': 'Healthcare', 'ARGX': 'Healthcare',
+    'AVEO': 'Healthcare', 'BLPH': 'Healthcare', 'BPMC': 'Healthcare', 'CALM': 'Healthcare', 'CAMP': 'Healthcare',
+    'CBPOQ': 'Healthcare', 'CCRN': 'Healthcare', 'CELYQ': 'Healthcare', 'CHA': 'Healthcare', 'CHKP': 'Healthcare',
+    'CMEA': 'Healthcare', 'COHR': 'Healthcare', 'CONE': 'Healthcare', 'COVM': 'Healthcare', 'CPRT': 'Healthcare',
+    'CRL': 'Healthcare', 'CRSR': 'Healthcare', 'CTLT': 'Healthcare', 'CVRS': 'Healthcare', 'CUZ': 'Healthcare',
+    'CVR': 'Healthcare', 'CXW': 'Healthcare', 'CYCC': 'Healthcare', 'CYH': 'Healthcare', 'DGX': 'Healthcare',
+    'DHC': 'Healthcare', 'DLHC': 'Healthcare', 'DRRX': 'Healthcare', 'DSEY': 'Healthcare', 'DTIL': 'Healthcare',
+    'DXP': 'Healthcare', 'DXYN': 'Healthcare', 'EBS': 'Healthcare', 'ECH': 'Healthcare', 'ECOL': 'Healthcare',
+    'ECTY': 'Healthcare', 'ELMD': 'Healthcare', 'ELYPQ': 'Healthcare', 'EME': 'Healthcare',
+    
+    # ========== INDUSTRIALS (79 stocks) ==========
+    'BA': 'Industrial', 'CAT': 'Industrial', 'GE': 'Industrial', 'HON': 'Industrial', 'UNP': 'Industrial',
+    'UPS': 'Industrial', 'DE': 'Industrial', 'ETN': 'Industrial', 'MMM': 'Industrial', 'RTX': 'Industrial',
+    'LMT': 'Industrial', 'NOC': 'Industrial', 'TXT': 'Industrial', 'LHX': 'Industrial', 'GD': 'Industrial',
+    'BWA': 'Industrial', 'CBOE': 'Industrial', 'CFG': 'Industrial', 'CIB': 'Industrial', 'CMPR': 'Industrial',
+    'CNXM': 'Industrial', 'CP': 'Industrial', 'CRS': 'Industrial', 'CTO': 'Industrial', 'CUB': 'Industrial',
+    'CVE': 'Industrial', 'CVX': 'Industrial', 'CXO': 'Industrial', 'D': 'Industrial', 'DAR': 'Industrial',
+    'DCUE': 'Industrial', 'DD': 'Industrial', 'DDM': 'Industrial', 'DFS': 'Industrial', 'DG': 'Industrial',
+    'DKNG': 'Industrial', 'DLR': 'Industrial', 'DPL': 'Industrial', 'DRH': 'Industrial', 'DRI': 'Industrial',
+    'DSGN': 'Industrial', 'DTE': 'Industrial', 'DTM': 'Industrial', 'DUK': 'Industrial', 'DVN': 'Industrial',
+    'DWCH': 'Industrial', 'DXC': 'Industrial', 'DXLG': 'Industrial', 'DYN': 'Industrial', 'EA': 'Industrial',
+    'EAT': 'Industrial', 'EB': 'Industrial', 'EBAYL': 'Industrial', 'ECHO': 'Industrial', 'ECL': 'Industrial',
+    'ED': 'Industrial', 'EDR': 'Industrial', 'EE': 'Industrial', 'EIG': 'Industrial', 'EIX': 'Industrial',
+    'EL': 'Industrial', 'ELC': 'Industrial', 'ELLI': 'Industrial', 'ELOX': 'Industrial', 'EMSYQ': 'Industrial',
+    'ENB': 'Industrial', 'ENC': 'Industrial', 'ENVA': 'Industrial', 'EOG': 'Industrial', 'EPMX': 'Industrial',
+    'EPR': 'Industrial', 'EQR': 'Industrial', 'EQIX': 'Industrial', 'EQST': 'Industrial', 'ERA': 'Industrial',
+    'ERF': 'Industrial', 'ERJ': 'Industrial', 'ESCO': 'Industrial', 'ESRT': 'Industrial', 'ET': 'Industrial',
+    
+    # ========== CONSUMER DISCRETIONARY (65 stocks) ==========
+    'AMZN': 'Consumer', 'MCD': 'Consumer', 'HD': 'Consumer', 'NKE': 'Consumer', 'BKNG': 'Consumer',
+    'CMCSA': 'Consumer', 'DIS': 'Consumer', 'TSLA': 'Consumer', 'NFLX': 'Consumer', 'WDAY': 'Consumer',
+    'ABNB': 'Consumer', 'ACN': 'Consumer', 'ADSK': 'Consumer', 'AEIS': 'Consumer', 'AFFM': 'Consumer',
+    'AGG': 'Consumer', 'AGX': 'Consumer', 'AGIO': 'Consumer', 'AHCO': 'Consumer', 'AILOY': 'Consumer',
+    'AIRM': 'Consumer', 'AJRD': 'Consumer', 'AKS': 'Consumer', 'AL': 'Consumer', 'ALB': 'Consumer',
+    'ALCO': 'Consumer', 'ALIN': 'Consumer', 'ALK': 'Consumer', 'ALKS': 'Consumer', 'ALLO': 'Consumer',
+    'ALLY': 'Consumer', 'ALLT': 'Consumer', 'ALLW': 'Consumer', 'ALMC': 'Consumer', 'ALMN': 'Consumer',
+    'ALMS': 'Consumer', 'ALMU': 'Consumer', 'ALOY': 'Consumer', 'ALP': 'Consumer', 'ALRM': 'Consumer',
+    'ALRS': 'Consumer', 'ALSX': 'Consumer', 'ALU': 'Consumer', 'ALVR': 'Consumer', 'ALYI': 'Consumer',
+    'ALZN': 'Consumer', 'AM': 'Consumer', 'AMA': 'Consumer', 'AMAP': 'Consumer', 'AMBC': 'Consumer',
+    'AMBI': 'Consumer', 'AMBO': 'Consumer', 'AMC': 'Consumer', 'AMCD': 'Consumer', 'AMCE': 'Consumer',
+    'AMCI': 'Consumer', 'AMCM': 'Consumer', 'AMCO': 'Consumer', 'AMCP': 'Consumer', 'AMCR': 'Consumer',
+    'AMCS': 'Consumer', 'AMCT': 'Consumer', 'AMCX': 'Consumer', 'AMD': 'Consumer', 'AMDA': 'Consumer',
+    'AMDD': 'Consumer', 'AMDX': 'Consumer', 'AME': 'Consumer', 'AMEA': 'Consumer', 'AMEC': 'Consumer',
+    
+    # ========== CONSUMER STAPLES (43 stocks) ==========
+    'WMT': 'Staples', 'KO': 'Staples', 'PG': 'Staples', 'PEP': 'Staples', 'COST': 'Staples',
+    'PM': 'Staples', 'CL': 'Staples', 'JCI': 'Staples', 'K': 'Staples', 'GIS': 'Staples',
+    'MO': 'Staples', 'CAG': 'Staples', 'CPB': 'Staples', 'CHD': 'Staples', 'ADM': 'Staples',
+    'SJM': 'Staples', 'TSN': 'Staples', 'MNST': 'Staples', 'STZ': 'Staples', 'SMPL': 'Staples',
+    'PBF': 'Staples', 'WBA': 'Staples', 'BGS': 'Staples', 'BLKB': 'Staples', 'BMY': 'Staples',
+    'BN': 'Staples', 'BOL': 'Staples', 'BORL': 'Staples', 'BOWL': 'Staples', 'BP': 'Staples',
+    'BPL': 'Staples', 'BPRN': 'Staples', 'BPS': 'Staples', 'BPT': 'Staples', 'BPTH': 'Staples',
+    'BR': 'Staples', 'BRK-A': 'Staples', 'BRK-B': 'Staples', 'BRKL': 'Staples', 'BRKS': 'Staples',
+    'BRO': 'Staples', 'BRT': 'Staples', 'BRTS': 'Staples', 'BRTS.U': 'Staples',
+    
+    # ========== FINANCIALS (73 stocks) ==========
+    'JPM': 'Finance', 'V': 'Finance', 'MA': 'Finance', 'BRK-B': 'Finance', 'GS': 'Finance',
+    'BAC': 'Finance', 'WFC': 'Finance', 'C': 'Finance', 'BLK': 'Finance', 'SCHW': 'Finance',
+    'AME': 'Finance', 'AFRM': 'Finance', 'AIG': 'Finance', 'AIZ': 'Finance', 'AJG': 'Finance',
+    'AKR': 'Finance', 'AL': 'Finance', 'ALB': 'Finance', 'ALGN': 'Finance', 'ALKS': 'Finance',
+    'ALL': 'Finance', 'ALLP': 'Finance', 'ALLW': 'Finance', 'ALLY': 'Finance', 'ALMC': 'Finance',
+    'ALMN': 'Finance', 'ALMS': 'Finance', 'ALMU': 'Finance', 'ALX': 'Finance', 'ALXN': 'Finance',
+    'AM': 'Finance', 'AMA': 'Finance', 'AMAL': 'Finance', 'AME': 'Finance', 'AMEP': 'Finance',
+    'AMER': 'Finance', 'AMES': 'Finance', 'AMET': 'Finance', 'AMEV': 'Finance', 'AMG': 'Finance',
+    'AMGR': 'Finance', 'AMH': 'Finance', 'AMHX': 'Finance', 'AMI': 'Finance', 'AMIC': 'Finance',
+    'AMID': 'Finance', 'AMIE': 'Finance', 'AMIO': 'Finance', 'AMIS': 'Finance', 'AMIT': 'Finance',
+    'AMIX': 'Finance', 'AMJ': 'Finance', 'AMJL': 'Finance', 'AMJL.U': 'Finance', 'AMK': 'Finance',
+    'AMKE': 'Finance', 'AML': 'Finance', 'AMLE': 'Finance', 'AMP': 'Finance', 'AMPE': 'Finance',
+    'AMPH': 'Finance', 'AMPI': 'Finance', 'AMR': 'Finance', 'AMRC': 'Finance', 'AMRD': 'Finance',
+    'AMRE': 'Finance', 'AMRK': 'Finance', 'AMRL': 'Finance', 'AMRM': 'Finance', 'AMRN': 'Finance',
+    
+    # ========== REAL ESTATE (29 stocks) ==========
+    'PLD': 'REIT', 'CCI': 'REIT', 'AMT': 'REIT', 'SPG': 'REIT', 'EQIX': 'REIT',
+    'O': 'REIT', 'AVB': 'REIT', 'DLR': 'REIT', 'ARE': 'REIT', 'IRM': 'REIT',
+    'VTR': 'REIT', 'PSA': 'REIT', 'EQR': 'REIT', 'MAA': 'REIT', 'UDR': 'REIT',
+    'SCH': 'REIT', 'LDRY': 'REIT', 'AIR': 'REIT', 'DEI': 'REIT', 'CPT': 'REIT',
+    'JOBY': 'REIT', 'KYMR': 'REIT', 'KIM': 'REIT', 'KRC': 'REIT', 'KRG': 'REIT',
+    'KRP': 'REIT', 'KRTX': 'REIT', 'KS': 'REIT', 'KSA': 'REIT',
+    
+    # ========== ENERGY (24 stocks) ==========
+    'CVX': 'Energy', 'COP': 'Energy', 'EOG': 'Energy', 'XOM': 'Energy', 'SLB': 'Energy',
+    'MPC': 'Energy', 'PSX': 'Energy', 'WMB': 'Energy', 'OKE': 'Energy', 'KMI': 'Energy',
+    'EPE': 'Energy', 'VLO': 'Energy', 'DCP': 'Energy', 'LNG': 'Energy', 'OXY': 'Energy',
+    'APC': 'Energy', 'CIVI': 'Energy', 'FANG': 'Energy', 'HAG': 'Energy', 'HEP': 'Energy',
+    'HP': 'Energy', 'HPE': 'Energy', 'HPI': 'Energy', 'HRC': 'Energy',
+    
+    # ========== UTILITIES (30 stocks) ==========
+    'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities', 'EXC': 'Utilities', 'LIN': 'Utilities',
+    'D': 'Utilities', 'AEP': 'Utilities', 'SRE': 'Utilities', 'AWK': 'Utilities', 'CMS': 'Utilities',
+    'AES': 'Utilities', 'PPL': 'Utilities', 'EIX': 'Utilities', 'AEE': 'Utilities', 'FE': 'Utilities',
+    'PNW': 'Utilities', 'DTE': 'Utilities', 'WEC': 'Utilities', 'EVRG': 'Utilities', 'NRG': 'Utilities',
+    'AEP': 'Utilities', 'ES': 'Utilities', 'MGEE': 'Utilities', 'KEN': 'Utilities', 'AGL': 'Utilities',
+    'PEG': 'Utilities', 'ES': 'Utilities', 'FLR': 'Utilities', 'NWE': 'Utilities', 'AVA': 'Utilities',
+    
+    # ========== MATERIALS (32 stocks) ==========
+    'LIN': 'Materials', 'APD': 'Materials', 'SHW': 'Materials', 'DD': 'Materials', 'ECL': 'Materials',
+    'PPG': 'Materials', 'ALB': 'Materials', 'IFF': 'Materials', 'LBRT': 'Materials', 'MLM': 'Materials',
+    'CTVA': 'Materials', 'AA': 'Materials', 'FCX': 'Materials', 'RIO': 'Materials', 'SCCO': 'Materials',
+    'CF': 'Materials', 'MOS': 'Materials', 'WLK': 'Materials', 'NEM': 'Materials', 'GLD': 'Materials',
+    'AUSS': 'Materials', 'AVY': 'Materials', 'BLL': 'Materials', 'BOSS': 'Materials', 'BOYN': 'Materials',
+    'BRG': 'Materials', 'BRPT': 'Materials', 'CF': 'Materials', 'CE': 'Materials', 'CECO': 'Materials',
+    'CLF': 'Materials', 'CMP': 'Materials', 'CRS': 'Materials', 'CW': 'Materials',
+    
+    # ========== COMMUNICATION SERVICES (22 stocks) ==========
+    'GOOGL': 'Comm', 'META': 'Comm', 'MSFT': 'Comm', 'DIS': 'Comm', 'VZ': 'Comm',
+    'T': 'Comm', 'CMCSA': 'Comm', 'CHTR': 'Comm', 'FOXA': 'Comm', 'NFLX': 'Comm',
+    'TMUS': 'Comm', 'DISH': 'Comm', 'CABO': 'Comm', 'CCOI': 'Comm', 'CCS': 'Comm',
+    'CDA': 'Comm', 'CHPT': 'Comm', 'CMBM': 'Comm', 'CMPR': 'Comm', 'CNSL': 'Comm',
+    'CPRT': 'Comm', 'CP': 'Comm',
 }
 
 SMALL_CAP_SECTOR_MAP = {
@@ -106,7 +323,11 @@ SMALL_CAP_SECTOR_MAP = {
     'NYCB': 'Finance', 'STWD': 'Finance',
 }
 
-SECTOR_MAP = LARGE_CAP_SECTOR_MAP if UNIVERSE_MODE == "large_cap" else SMALL_CAP_SECTOR_MAP
+# Dynamically select sector map and tickers based on configuration
+if UNIVERSE_MODE == "large_cap":
+    SECTOR_MAP = LARGE_CAP_500_SECTOR_MAP if USE_FULL_500_STOCK_UNIVERSE else LARGE_CAP_SECTOR_MAP
+else:
+    SECTOR_MAP = SMALL_CAP_SECTOR_MAP
 
 START_DATE = '2019-01-01'
 END_DATE   = '2024-12-31'
@@ -126,7 +347,7 @@ TRAIN_WINDOW_MODE = "rolling"
 TRAIN_DAYS_CANDIDATES = [504, 756, 1260]
 
 # Optional train-only quantile clipping applied before scaler (fit quantiles on train rows)
-WINSORIZE_ENABLED = False
+WINSORIZE_ENABLED = True
 WINSORIZE_LOWER_Q = 0.005
 WINSORIZE_UPPER_Q = 0.995
 
@@ -297,7 +518,7 @@ LSTM_B_LR_FACTOR     = 0.5
 LSTM_B_VAL_SPLIT     = 0.2
 
 # ── Shared LSTM settings ──────────────────────────────────────────────────
-LSTM_WD              = 1e-5                   # weight decay (both models)
+LSTM_WD              = 1e-4                   # weight decay (both models)
 
 # ── LSTM Hyperparameter Search Grid (Bhandari §3.3) ──────────────────────────
 # Used by LSTM-B Phase 1 tuning (optimizer / lr / batch_size)

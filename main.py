@@ -7,7 +7,7 @@ Models:
   - RF:       Random Forest (baseline)
   - XGBoost:  Gradient Boosted Trees (baseline)
   - LSTM-B:   Primary neural-network model (multi-feature, fixed architecture)
-  - Ensemble: Mean probability across all four models above
+  - Ensemble: Mean probability of LR + LSTM-B (RF and XGBoost excluded: negative Sharpe)
 
 Run:
     .venv/bin/python3 main.py
@@ -851,8 +851,8 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Ensemble model (mean of all four models) ──────────────────────────────
-    _ens_base_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_B']
+    # ── Ensemble model (LR + LSTM-B only: RF and XGBoost have negative Sharpe) ──
+    _ens_base_cols = ['Prob_LR', 'Prob_LSTM_B']
     _ens_avail = [c for c in _ens_base_cols if c in full_preds.columns]
     if _ens_avail:
         ens_preds = full_preds.dropna(subset=_ens_avail).copy()
