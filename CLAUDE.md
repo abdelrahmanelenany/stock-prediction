@@ -1,18 +1,23 @@
 # CLAUDE.md — Neural Networks for Stock Behavior Prediction
 > Bachelor's Project · Complete Implementation Reference for IDE Copilot
 > Based on Fischer & Krauss (2017), Krauss, Do & Huck (2017), and Bhandari et al. (2022)
-> **Last Updated:** 2025-01-XX (Reflects current implementation)
+> **Last Updated:** 2026-04-16 (Reflects current implementation)
 
 ---
 
 ## Project Summary
 
 Build a **walk-forward validated, backtested long-short trading strategy** using ML models
-(Logistic Regression, Random Forest, XGBoost, LSTM-A, LSTM-B, Ensemble) on a **70-stock S&P 500 development universe**
-over **2015–2024**. The pipeline predicts each stock's probability of outperforming
-the cross-sectional median return the next day, ranks stocks by that probability, and constructs
-an equal-weighted long-short portfolio. Features include **10 technical indicators** (including multi-day momentum)
-with **causal wavelet denoising** (Bhandari extension). All performance is reported net of transaction costs.
+(Logistic Regression, Random Forest, XGBoost, LSTM-B, Ensemble) on a configurable stock universe
+over **2019–2024**. The pipeline predicts each stock's probability of outperforming
+the cross-sectional median N-day forward return, ranks stocks by that probability, and constructs
+an equal-weighted long-short portfolio. Features include technical indicators plus optional
+**market-context and sector-context features**, with optional **causal wavelet denoising** (disabled
+by default). All performance is reported net of transaction costs.
+
+**Two universe modes:**
+- `large_cap`: 50 S&P 500 large caps balanced across 5 sectors (Tech, Finance, Healthcare, Consumer, Industrial)
+- `small_cap`: 30 true small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
 
 **Target hardware:** MacBook Air M4 (CPU / MPS backend for PyTorch).
 
@@ -22,43 +27,60 @@ with **causal wavelet denoising** (Bhandari extension). All performance is repor
 
 ```
 stock_prediction/
-├── config.py                  # All hyperparameters and constants (single source of truth)
-├── main.py                    # Orchestrates the full pipeline end-to-end
-├── requirements.txt           # Python dependencies
+├── config.py                         # All hyperparameters and constants (single source of truth)
+├── main.py                           # Orchestrates the full pipeline end-to-end
+├── combine_and_backtest.py           # Stitch together separate baseline/LSTM runs
+├── generate_feature_importance_plot.py  # Feature importance visualisation
+├── generate_latex_tables.py          # LaTeX table generation from reports CSVs
+├── generate_thesis_outputs.py        # Batch thesis output generator
+├── requirements.txt                  # Python dependencies
 ├── data/
 │   ├── raw/
-│   │   ├── ohlcv_raw.csv      # Multi-index download from yfinance
-│   │   └── ohlcv_long.csv     # Restructured: Date, Ticker, OHLCV
+│   │   ├── ohlcv_raw.csv             # Multi-index download from yfinance
+│   │   └── ohlcv_long.csv            # Restructured: Date, Ticker, OHLCV
 │   └── processed/
-│       └── features.csv       # All features + target (cached)
+│       ├── features_large_cap.csv    # All features + target for large-cap universe (cached)
+│       └── features_small_cap.csv    # All features + target for small-cap universe (cached)
 ├── pipeline/
-│   ├── data_loader.py         # Download + clean + save raw data
-│   ├── features.py            # Compute 10 technical features + causal wavelet denoising
-│   ├── targets.py             # Binary cross-sectional median target
-│   ├── walk_forward.py        # Walk-forward fold generator (train/val/test)
-│   └── standardizer.py        # Standard/MinMax scaler (fit on train only)
+│   ├── data_loader.py                # Download + clean + save raw data
+│   ├── features.py                   # Technical + context features + causal wavelet denoising
+│   ├── targets.py                    # Configurable N-day cross-sectional median target
+│   ├── walk_forward.py               # Walk-forward fold generator (rolling / expanding)
+│   ├── standardizer.py               # Standard/MinMax scaler + winsorizer (fit on train only)
+│   ├── fold_reporting.py             # Per-fold JSON/CSV diagnostic artifacts
+│   └── diagnostics.py               # Dataset diagnostics utilities
 ├── models/
-│   ├── baselines.py           # LogisticRegression, RandomForest, XGBoost (with grid search)
-│   ├── lstm_model.py          # LSTM-A and LSTM-B architectures + hyperparameter tuning
-│   └── calibration.py         # Probability calibration (isotonic/Platt)
+│   ├── baselines.py                  # LR, RF, XGBoost (with grid search + feature importances)
+│   ├── lstm_model.py                 # LSTM-B architecture + Bhandari-style tuning
+│   └── calibration.py               # Probability calibration (isotonic/Platt)
 ├── backtest/
-│   ├── signals.py             # Rank -> Long/Short/Hold signals (with smoothing & z-scoring)
-│   ├── portfolio.py           # Daily P&L with transaction costs
-│   └── metrics.py             # Sharpe, Sortino, MDD, Calmar, AUC, Daily AUC, sub-period analysis
+│   ├── signals.py                    # Rank → Long/Short/Hold signals (smoothing, z-scoring, holding)
+│   ├── portfolio.py                  # Daily P&L with transaction costs + slippage + invert_signals
+│   └── metrics.py                    # Sharpe, Sortino, MDD, Calmar, AUC, Daily AUC, sub-period
+├── evaluation/
+│   └── metrics_utils.py              # binary_auc_safe, classification_sanity_checks, log_split_balance
+├── experiments/
+│   ├── lstm_lr_sweep.py              # LSTM-B learning rate grid sweep
+│   └── train_window_sweep.py         # Train-window length comparison (~1y / ~3y / ~5y)
 ├── analysis/
-│   └── feature_correlation.py # Feature correlation analysis and selection
+│   └── feature_correlation.py        # Feature correlation analysis and selection
 ├── outputs/
-│   ├── figures/               # Generated plots
-│   └── feature_selection_log.txt
-├── reports/                   # Output tables and CSVs
-│   ├── table_T5_*.csv         # Gross/net returns
-│   ├── table_T6_*.csv         # Sub-period performance
-│   ├── table_T8_*.csv         # Classification metrics
-│   ├── lstm_tuning_results.csv # LSTM hyperparameter tuning results
-│   ├── daily_returns_*.csv    # Daily return series
-│   ├── signals_all_models.csv # All model signals
-│   └── backtest_summary.txt   # Human-readable summary
-└── notebooks/                 # Visualization & reporting (placeholder)
+│   └── figures/                      # Generated plots (cumulative returns, feature importance, etc.)
+├── reports/                          # Output tables and CSVs (universe-prefixed)
+│   ├── large_cap_table_T5_*.csv      # Gross/net returns (large-cap)
+│   ├── large_cap_table_T6_*.csv      # Sub-period performance (large-cap)
+│   ├── large_cap_table_T8_*.csv      # Classification metrics (large-cap)
+│   ├── large_cap_feature_importances_*.csv  # Per-fold + averaged feature importances
+│   ├── large_cap_fold_sharpe_per_model.csv  # Fold-level Sharpe diagnostics
+│   ├── large_cap_lstm_tuning_results.csv    # LSTM-B hyperparameter tuning results
+│   ├── large_cap_full_predictions.csv       # Raw per-fold model probabilities
+│   ├── large_cap_daily_returns_*.csv        # Daily return series
+│   ├── large_cap_signals_all_models.csv     # All model signals
+│   ├── large_cap_backtest_summary.txt       # Human-readable summary
+│   ├── small_cap_*/                  # Same outputs for small-cap universe
+│   ├── fold_reports/                 # Per-fold JSON diagnostic artifacts
+│   └── training_logs/               # LSTM epoch-level training logs (CSV)
+└── notebooks/                        # Visualisation & reporting (placeholder)
 ```
 
 ---
@@ -80,253 +102,111 @@ pip install matplotlib seaborn plotly scipy statsmodels
 ```
 
 **M4 device selection (always include at top of training scripts):**
-```python
-import torch
-device = (
-    torch.device("mps") if torch.backends.mps.is_available()
-    else torch.device("cpu")
-)
-print(f"Using device: {device}")  # Should print: mps
-```
+Device priority: CUDA → MPS → CPU. The pipeline auto-detects in `main.py`.
 
 ---
 
 ## config.py — Single Source of Truth
 
-```python
-# config.py — Current Implementation
+### Universe Configuration
 
-# =============================================================================
-# 1. UNIVERSE: 70-stock S&P 500 development subset
-# =============================================================================
-TICKERS = [
-    # Technology (7)
-    'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'ORCL', 'CSCO',
-    # Finance (7)
-    'BRK-B', 'JPM', 'WFC', 'BAC', 'V', 'C', 'MA',
-    # Healthcare (7)
-    'JNJ', 'PFE', 'UNH', 'MRK', 'ABBV', 'AMGN', 'LLY',
-    # Consumer Discretionary (7)
-    'HD', 'MCD', 'NKE', 'SBUX', 'LOW', 'TJX', 'BKNG',
-    # Consumer Staples (6)
-    'WMT', 'PG', 'KO', 'PEP', 'COST', 'PM',
-    # Communication Services (7)
-    'DIS', 'CMCSA', 'TMUS', 'VZ', 'T', 'CHTR', 'FOXA',  # added for 70-stock target
-    # Energy (6)
-    'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC',
-    # Industrials (6)
-    'GE', 'UPS', 'HON', 'BA', 'CAT', 'UNP',
-    # Utilities (6)
-    'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC',  # added for 70-stock target
-    # Real Estate (6)
-    'AMT', 'PLD', 'CCI', 'EQIX', 'SPG', 'O',  # added for 70-stock target
-    # Materials (5)
-    'LIN', 'APD', 'SHW', 'DD', 'ECL',  # added for 70-stock target
-]
+The active universe is controlled by `UNIVERSE_MODE` ("large_cap" | "small_cap") and
+`USE_FULL_500_STOCK_UNIVERSE` (False = 50-stock curated | True = all ~500 S&P 500 stocks).
 
-START_DATE = '2015-01-01'
-END_DATE   = '2024-12-31'
+A `UniverseConfig` dataclass captures all universe-specific settings:
+- `tickers`, `baseline_feature_cols`, `lstm_b_feature_cols`
+- `invert_signals` — large-cap inverts portfolio direction (mean-reversion)
+- `invert_features` — flips momentum features for reversal-oriented universes
+- `sector_min_size`, `sector_winsorize`, `sector_winsorize_pct`
+- `k_stocks`, `include_lstm_b_in_ensemble`
 
-# =============================================================================
-# 2. WALK-FORWARD FOLD STRUCTURE
-# =============================================================================
-TRAIN_DAYS = 500   # ~2 years
-VAL_DAYS   = 125   # ~6 months (hyperparameter tuning)
-TEST_DAYS  = 125   # ~6 months (out-of-sample evaluation)
+**Active config objects:** `LARGE_CAP_CONFIG` and `SMALL_CAP_CONFIG`.
 
-# =============================================================================
-# 3. SEQUENCE CONFIG
-# =============================================================================
-SEQ_LEN = 60  # LSTM lookback window (trading days)
+### Key Parameters (current values)
 
-# =============================================================================
-# 4. TRADING
-# =============================================================================
-K_STOCKS = 10  # Number of long / short positions per day from the 70-stock universe
-TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
+| Parameter | Value | Notes |
+|---|---|---|
+| `UNIVERSE_MODE` | `"large_cap"` | Toggle to `"small_cap"` for comparison |
+| `START_DATE` | `2019-01-01` | 6-year sample |
+| `END_DATE` | `2024-12-31` | |
+| `TRAIN_DAYS` | 252 | ~1 trading year |
+| `VAL_DAYS` | 63 | ~1 quarter |
+| `TEST_DAYS` | 63 | ~1 quarter |
+| `MAX_FOLDS` | None | Set to limit folds for development runs |
+| `TRAIN_WINDOW_MODE` | `"rolling"` | "rolling" or "expanding" |
+| `WALK_FORWARD_STRIDE` | None | Defaults to TEST_DAYS |
+| `SEQ_LEN` | 30 | LSTM lookback window (trading days) |
+| `K_STOCKS` | 5 | Long top-5, short bottom-5 per day |
+| `TC_BPS` | 5 | Transaction cost per half-turn |
+| `SLIPPAGE_BPS` | 0.0 | Extra execution cost (0 = off) |
+| `TARGET_HORIZON_DAYS` | 21 | Forward return horizon for Target (1/5/21) |
+| `RANDOM_SEED` | 42 | |
 
-# Signal generation parameters
-SIGNAL_SMOOTH_ALPHA = 0.3              # EMA smoothing for turnover reduction
-SIGNAL_CONFIDENCE_THRESHOLD = 0.0      # Pure ranking (no threshold)
-SIGNAL_USE_ZSCORE = True               # Cross-sectional z-scoring
-MIN_HOLDING_DAYS = 5                   # Minimum days to hold position
+### Signal Parameters
 
-# =============================================================================
-# 5. RANDOM SEED
-# =============================================================================
-RANDOM_SEED = 42
+| Parameter | Value | Notes |
+|---|---|---|
+| `SIGNAL_SMOOTH_ALPHA` | 0.0 | EMA alpha (0 = no smoothing) |
+| `SIGNAL_EMA_METHOD` | `"alpha"` | "alpha" or "span" |
+| `SIGNAL_CONFIDENCE_THRESHOLD` | 0.55 | z-score threshold; sit out low-conviction signals |
+| `SIGNAL_USE_ZSCORE` | True | Cross-sectional z-scoring before ranking |
+| `MIN_HOLDING_DAYS` | 5 | Minimum holding period constraint |
+| `RUN_SIGNAL_ABLATION` | False | Compare raw-rank vs full pipeline |
 
-# =============================================================================
-# 6. FEATURE SETS (10 FEATURES TOTAL)
-# =============================================================================
-ALL_FEATURE_COLS = [
-    "Return_1d",        # Daily return
-    "Return_5d",        # Weekly momentum (NEW)
-    "Return_21d",       # Monthly momentum (NEW)
-    "RSI_14",           # Relative Strength Index
-    "MACD",             # Moving Average Convergence Divergence
-    "ATR_14",           # Average True Range
-    "BB_PctB",          # Bollinger Band %B
-    "RealVol_20d",      # Realized volatility
-    "Volume_Ratio",     # Volume vs 20-day average
-    "SectorRelReturn",  # Leave-one-out sector-relative return
-]
+### Feature Sets
 
-# LSTM-A features (6 features - includes momentum)
-LSTM_A_FEATURE_COLS = [
-    "MACD", "RSI_14", "ATR_14",
-    "Return_1d", "Return_5d", "Return_21d"
-]
+**Master feature union** (`ALL_FEATURE_COLS`) — dynamically built, includes:
+- Core: `Return_1d`, `NegReturn_1d`, `Return_5d`, `NegReturn_5d`, `Return_21d`, `RSI_14`, `MACD`, `ATR_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn`
+- Reversal aliases: `RSI_Reversal`, `NegMACD`, `BB_Reversal`
+- Market context (if `MARKET_FEATURES_ENABLED=True`): `Market_Return_1d/5d/21d`, `Market_Vol_20d/60d`, `RelToMarket_1d/5d/21d`, `Beta_60d`
+- Sector context (if `SECTOR_FEATURES_ENABLED=True`): `Sector_Return_1d/5d/21d`, `Sector_Vol_20d/60d`, `SectorRelZ_Return_1d`
 
-# LSTM-B features (8 features - includes momentum)
-LSTM_B_FEATURE_COLS = [
-    "Return_1d", "Return_5d", "Return_21d",
-    "RSI_14", "BB_PctB", "RealVol_20d",
-    "Volume_Ratio", "SectorRelReturn"
-]
+**LSTM-B features** (`LSTM_B_FEATURE_COLS`): `Return_1d`, `Return_5d`, `Return_21d`, `RSI_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn` + market/sector context features (if enabled).
 
-# Baseline models use LSTM-B features
-BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
+**Baseline features** (`BASELINE_FEATURE_COLS`): Same as `LSTM_B_FEATURE_COLS` for fair comparison.
 
-TARGET_COL = 'Target'
+### LSTM-B Architecture (Fixed)
 
-# =============================================================================
-# 7. MODEL REGISTRY
-# =============================================================================
-MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
-# Also computed: Ensemble (mean of all 5 models)
+| Parameter | Value |
+|---|---|
+| Hidden size | 32 |
+| Num layers | 1 |
+| Dropout | 0.0 |
+| Learning rate | 0.001 |
+| Batch size | 256 |
+| Optimizer | Adam |
+| Sequence length | 30 |
+| Max epochs | 200 |
+| Early stopping patience | 15 |
+| LR scheduler patience | 7 |
+| LR scheduler factor | 0.5 |
+| Weight decay | 1e-4 |
 
-# =============================================================================
-# 8. HYPERPARAMETER GRIDS
-# =============================================================================
+**Tuning:** `LSTM_B_ENABLE_TUNING` (currently True), `LSTM_B_TUNE_ON_FIRST_FOLD_ONLY` (True — tune on fold 1 and reuse).
+Selection criterion: validation net Sharpe (then annualised return as tiebreaker) — NOT AUC alone.
+Return-aware guardrail: tuned candidate is only accepted if it outperforms the default on val trading metrics.
 
-# LSTM-A: Two-phase tuning (Bhandari §3.3)
-LSTM_A_ARCH_GRID = {
-    "hidden_size": [16, 32, 64],
-    "num_layers":  [1, 2],
-    "dropout":     [0.1, 0.2],
-}
-LSTM_HYPERPARAM_GRID = {
-    "optimizer":      ["adam", "adagrad", "nadam"],
-    "learning_rate":  [0.1, 0.01, 0.001],
-    "batch_size":     [32, 64, 128],
-}
-LSTM_TUNE_REPLICATES = 3    # Replicate count for tuning
-LSTM_TUNE_PATIENCE   = 5    # Early stopping during tuning
-LSTM_TUNE_MAX_EPOCHS = 50   # Max epochs during tuning
+### LSTM Diagnostics
 
-# LSTM-A: Training settings
-LSTM_A_DEV_MODE     = True    # Set False for final thesis run only
-LSTM_A_OPTIMIZER     = 'adam'
-LSTM_A_LR            = 0.001
-LSTM_A_BATCH         = 128
-LSTM_A_MAX_EPOCHS    = 200
-LSTM_A_PATIENCE      = 15
-LSTM_A_VAL_SPLIT     = 0.2
+| Parameter | Value |
+|---|---|
+| `LSTM_LOG_EVERY_EPOCH` | True |
+| `LSTM_SAVE_TRAINING_CSV` | True |
+| `LSTM_AUDIT_GRAD_NORM` | True |
+| `LSTM_MAX_GRAD_NORM` | 1.0 (gradient clipping) |
+| `LSTM_FLAT_AUC_WARN_epochs` | 8 |
+| `LSTM_OVERFIT_LOSS_RATIO` | 3.0 |
 
-# LSTM-B: Fixed architecture (no tuning)
-LSTM_B_HIDDEN_SIZE   = 64
-LSTM_B_NUM_LAYERS    = 2
-LSTM_B_DROPOUT       = 0.2
-LSTM_B_OPTIMIZER     = 'adam'
-LSTM_B_LR            = 0.001
-LSTM_B_BATCH         = 128
-LSTM_B_MAX_EPOCHS    = 200
-LSTM_B_PATIENCE      = 15
-LSTM_B_LR_PATIENCE   = 7     # ReduceLROnPlateau patience
-LSTM_B_LR_FACTOR     = 0.5   # ReduceLROnPlateau factor
-LSTM_B_VAL_SPLIT     = 0.2
+### Normalization & Regularization
 
-# Shared LSTM settings
-LSTM_WD              = 1e-5  # Weight decay
+- `SCALER_TYPE`: "standard" (Z-score normalisation)
+- `WINSORIZE_ENABLED`: True — train quantile clipping (0.5th–99.5th percentile) applied before scaler
+- `WINSORIZE_LOWER_Q`: 0.005, `WINSORIZE_UPPER_Q`: 0.995
 
-# XGBoost grid
-XGB_PARAM_GRID = {
-    'max_depth':  [3, 4, 5],
-    'eta':        [0.01],
-    'subsample':  [0.6, 0.7],
-}
-XGB_COLSAMPLE    = 0.5   # Reduced from 0.7 for more regularization
-XGB_ROUNDS       = 1000
-XGB_EARLY_STOP   = 50
-XGB_REG_ALPHA    = 0.1   # L1 regularization
-XGB_REG_LAMBDA   = 1.0   # L2 regularization
+### Wavelet Denoising
 
-# Random Forest grid
-RF_PARAM_GRID = {
-    'n_estimators':     [300],
-    'max_depth':        [5, 10],
-    'min_samples_leaf': [30, 50],
-}
-
-# Logistic Regression
-LR_C_GRID = [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
-
-# =============================================================================
-# 9. WAVELET DENOISING (Bhandari §4.5) — CAUSAL IMPLEMENTATION
-# =============================================================================
-USE_WAVELET_DENOISING = True     # Set False for ablation study
-WAVELET_TYPE          = "haar"   # Paper uses Haar wavelets
-WAVELET_LEVEL         = 1        # Decomposition level
-WAVELET_MODE          = "soft"   # Soft thresholding (vs 'hard')
-WAVELET_WINDOW_SIZE   = 128      # CAUSAL: lookback window for denoising
-
-# =============================================================================
-# 10. NORMALIZATION
-# =============================================================================
-SCALER_TYPE = "standard"   # Options: "standard" (Z-score) | "minmax"
-
-# =============================================================================
-# 11. FEATURE SELECTION (Bhandari §4.4)
-# =============================================================================
-FEATURE_CORR_THRESHOLD = 0.80   # Drop features with |r| > threshold
-
-# After running analysis/feature_correlation.py:
-FEATURE_COLS_AFTER_SELECTION = [
-    'Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'MACD',
-    'ATR_14', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn'
-]
-
-# =============================================================================
-# 12. SECTOR MAPPING
-# =============================================================================
-SECTOR_MAP = {
-    # Technology
-    'AAPL': 'Tech', 'MSFT': 'Tech', 'GOOGL': 'Tech', 'AMZN': 'Tech',
-    'META': 'Tech', 'ORCL': 'Tech', 'CSCO': 'Tech',
-    # Finance
-    'BRK-B': 'Finance', 'JPM': 'Finance', 'WFC': 'Finance', 'BAC': 'Finance',
-    'V': 'Finance', 'C': 'Finance', 'MA': 'Finance',
-    # Healthcare
-    'JNJ': 'Healthcare', 'PFE': 'Healthcare', 'UNH': 'Healthcare',
-    'MRK': 'Healthcare', 'ABBV': 'Healthcare', 'AMGN': 'Healthcare',
-    'LLY': 'Healthcare',
-    # Consumer Discretionary
-    'HD': 'Consumer', 'MCD': 'Consumer', 'NKE': 'Consumer', 'SBUX': 'Consumer',
-    'LOW': 'Consumer', 'TJX': 'Consumer', 'BKNG': 'Consumer',
-    # Consumer Staples
-    'WMT': 'Staples', 'PG': 'Staples', 'KO': 'Staples',
-    'PEP': 'Staples', 'COST': 'Staples', 'PM': 'Staples',
-    # Communication Services
-    'DIS': 'Comm', 'CMCSA': 'Comm', 'TMUS': 'Comm', 'VZ': 'Comm',
-    'T': 'Comm', 'CHTR': 'Comm', 'FOXA': 'Comm',
-    # Energy
-    'XOM': 'Energy', 'CVX': 'Energy', 'COP': 'Energy',
-    'SLB': 'Energy', 'EOG': 'Energy', 'MPC': 'Energy',
-    # Industrials
-    'GE': 'Industrial', 'UPS': 'Industrial', 'HON': 'Industrial',
-    'BA': 'Industrial', 'CAT': 'Industrial', 'UNP': 'Industrial',
-    # Utilities
-    'NEE': 'Utilities', 'DUK': 'Utilities', 'SO': 'Utilities',
-    'D': 'Utilities', 'AEP': 'Utilities', 'EXC': 'Utilities',
-    # Real Estate
-    'AMT': 'REIT', 'PLD': 'REIT', 'CCI': 'REIT',
-    'EQIX': 'REIT', 'SPG': 'REIT', 'O': 'REIT',
-    # Materials
-    'LIN': 'Materials', 'APD': 'Materials', 'SHW': 'Materials',
-    'DD': 'Materials', 'ECL': 'Materials',
-}
-```
+`USE_WAVELET_DENOISING`: **False** (disabled by default — domain-shift risk in OOS evaluation).
+When enabled: Haar wavelet, level 1, soft thresholding, causal rolling window of 128 days.
 
 ---
 
@@ -334,860 +214,266 @@ SECTOR_MAP = {
 
 **Status:** ✅ Implemented
 
-```python
-import yfinance as yf
-import pandas as pd
-from config import TICKERS, START_DATE, END_DATE
-
-def download_and_save():
-    raw = yf.download(TICKERS, start=START_DATE, end=END_DATE, auto_adjust=True)
-    raw.to_csv('data/raw/ohlcv_raw.csv')
-
-    # Restructure from MultiIndex -> long format
-    panels = {}
-    for ticker in TICKERS:
-        df = raw.xs(ticker, axis=1, level=1).copy()
-        df['Ticker'] = ticker
-        panels[ticker] = df
-
-    data = pd.concat(panels.values()).reset_index()
-    data.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Ticker']
-    data = data.sort_values(['Ticker', 'Date']).reset_index(drop=True)
-
-    # Cleaning rules
-    data['Return_1d'] = data.groupby('Ticker')['Close'].pct_change(1)
-    data = data[data['Volume'] > 0]                          # remove non-trading days
-    data = data.groupby('Ticker').apply(
-        lambda g: g.ffill(limit=2)
-    ).reset_index(drop=True)
-    data.dropna(subset=['Close'], inplace=True)
-
-    data.to_csv('data/raw/ohlcv_long.csv', index=False)
-    print(f"Saved {len(data)} rows. Missing: {data.isna().sum().sum()}")
-    return data
-```
-
-**Data quality rules:**
-- `auto_adjust=True` handles splits and dividends automatically.
-- Forward-fill gaps <= 2 days; drop rows if streak > 3 days.
-- Remove Volume = 0 days (non-trading).
-- Flag `|Return_1d| > 20%` for manual review; keep unless clearly erroneous.
+- Downloads OHLCV via `yfinance` with `auto_adjust=True` (handles splits/dividends).
+- Restructures from MultiIndex to long format: `[Date, Open, High, Low, Close, Volume, Ticker]`.
+- Cleaning: removes Volume=0 days, forward-fills gaps ≤2 days, flags `|Return_1d| > 20%`.
 
 ---
 
 ## Step 2 — Feature Engineering (`pipeline/features.py`)
 
-**Status:** ✅ Implemented with 10 features (including momentum)
+**Status:** ✅ Implemented with technical + context features
 
-### 2a. 10 Technical Features
+### 2a. Technical Features (computed per ticker from raw Close)
 
-| Feature | Formula | Economic Intuition |
+| Feature | Formula | Notes |
 |---|---|---|
-| Return_1d | 1-day simple return | Daily momentum |
-| Return_5d | 5-day simple return | **Weekly momentum (NEW)** |
-| Return_21d | 21-day simple return | **Monthly momentum (NEW)** |
-| RSI_14 | Relative Strength Index, 14-day | Overbought / oversold |
-| MACD | 12d EMA - 26d EMA | Trend change momentum |
-| ATR_14 | Average True Range, 14d | Daily volatility |
-| BB_PctB | (Close-Lower)/(Upper-Lower), 20d | Price position in Bollinger band |
-| RealVol_20d | Annualized 20-day realized volatility | Volatility regime |
-| Volume_Ratio | Volume / 20d avg Volume | Unusual activity |
-| SectorRelReturn | Stock return - leave-one-out sector mean | Cross-sectional relative performance |
+| `Return_1d` | 1-day simple return | Daily momentum |
+| `Return_5d` | 5-day simple return | Weekly momentum |
+| `Return_21d` | 21-day simple return | Monthly momentum |
+| `RSI_14` | Relative Strength Index, 14-day | Overbought / oversold |
+| `MACD` | 12d EMA – 26d EMA | Trend momentum |
+| `ATR_14` | Average True Range, 14-day | Daily volatility |
+| `BB_PctB` | (Close–Lower)/(Upper–Lower), 20d | Bollinger Band position |
+| `RealVol_20d` | Annualised 20-day realised volatility | Volatility regime |
+| `Volume_Ratio` | Volume / 20d avg volume | Unusual activity |
 
-### 2b. Causal Wavelet Denoising (Bhandari Extension - CRITICAL FIX)
+Reversal aliases computed alongside (same underlying data, sign-flipped or complement):
+`NegReturn_1d`, `NegReturn_5d`, `RSI_Reversal`, `NegMACD`, `BB_Reversal`.
 
-**Status:** ✅ Implemented with CAUSAL rolling-window denoising
+### 2b. Cross-Sectional Feature (`SectorRelReturn`)
 
-Haar wavelet soft denoising is applied to Close prices using a **rolling window approach**
-to prevent look-ahead bias:
+Leave-one-out sector mean return: each stock's `Return_1d` minus the equal-weighted mean
+return of all other stocks in the same sector on that date. Optional winsorization
+at `sector_winsorize_pct` percentile cross-sectionally per date.
 
-```python
-def denoise_close_price_causal(close_series: pd.Series, threshold: float,
-                                window_size: int = 128,
-                                wavelet: str = "haar",
-                                level: int = 1,
-                                mode: str = "soft") -> pd.Series:
-    """
-    CAUSAL wavelet denoising: each value at time t uses only a fixed lookback window.
+### 2c. Market Context Features (optional, `MARKET_FEATURES_ENABLED`)
 
-    This prevents look-ahead bias by ensuring the denoised value at time t
-    depends only on prices from times [t - window_size, t], not future data.
-    """
-    prices = close_series.values.astype(float)
-    denoised = np.full(len(prices), np.nan)
+Cross-sectional mean returns at 1d/5d/21d horizons, rolling market volatility at 20d/60d,
+excess returns vs market at 1d/5d/21d, and rolling 60-day CAPM-style beta.
+All computed causally from same-day or historical data only.
 
-    # For each time point >= window_size, apply wavelet denoising to lookback window
-    for t in range(window_size, len(prices)):
-        # Fixed lookback window ending at t (inclusive)
-        window = prices[t - window_size:t + 1]
+### 2d. Sector Context Features (optional, `SECTOR_FEATURES_ENABLED`)
 
-        # Wavelet decomposition
-        coeffs = pywt.wavedec(window, wavelet=wavelet, level=level)
+Leave-one-out sector mean returns at 1d/5d/21d, rolling sector volatility at 20d/60d,
+and within-(Date, Sector) z-score of 1d return.
 
-        # Apply thresholding to detail coefficients
-        coeffs_thresh = [coeffs[0]]  # Keep approximation unchanged
-        for detail in coeffs[1:]:
-            coeffs_thresh.append(pywt.threshold(detail, threshold, mode=mode))
+### 2e. Causal Wavelet Denoising (optional, `USE_WAVELET_DENOISING=False`)
 
-        # Reconstruct and take only the LAST value (current time t)
-        reconstructed = pywt.waverec(coeffs_thresh, wavelet=wavelet)
-        denoised[t] = reconstructed[-1]
-
-    # For early points (warm-up period), use raw prices
-    denoised[:window_size] = prices[:window_size]
-
-    return pd.Series(denoised, index=close_series.index, name=close_series.name)
-```
+When enabled: Haar wavelet soft denoising applied per fold using training-only thresholds.
+Rolling-window causal approach: each value at time t uses only data from [t-128, t].
+Targets are preserved based on raw returns after denoising.
 
 **Critical anti-leakage measures:**
 1. Thresholds computed from **training data only** per fold
 2. Causal denoising: each value uses only **historical data** (rolling window)
 3. Applied to each split **independently** (no concatenation)
-4. **Target remains based on raw returns** (not denoised) for honest evaluation
-
-**Feature column names (10 total):**
-```python
-ALL_FEATURE_COLS = [
-    'Return_1d', 'Return_5d', 'Return_21d',  # Momentum features
-    'RSI_14', 'MACD', 'ATR_14',              # Technical indicators
-    'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn'  # Volatility & cross-sectional
-]
-TARGET_COL = 'Target'
-```
+4. **Targets remain based on raw returns** (not denoised) for honest evaluation
 
 ---
 
 ## Step 3 — Target Variable (`pipeline/targets.py`)
 
-**Status:** ✅ Implemented
+**Status:** ✅ Implemented with configurable horizon
 
-Binary label: **1 if stock's next-day return >= cross-sectional median, else 0**.
-This is identical to both papers. Creates a ~50/50 balanced dataset by construction.
+**Two output columns:**
+- `Return_NextDay` — always the 1-day forward return; used by `portfolio.py` for P&L only.
+- `Target` — binary label: 1 if stock's `TARGET_HORIZON_DAYS`-day forward return ≥ cross-sectional median, else 0.
 
-```python
-def create_targets(data: pd.DataFrame, return_col: str = 'Return_1d') -> pd.DataFrame:
-    data = data.copy().sort_values(['Date', 'Ticker'])
+**Current setting:** `TARGET_HORIZON_DAYS = 21` (monthly momentum target for large-cap).
+Rationale: 1-day predictability is near-zero for large-cap liquid stocks; multi-day horizons
+yield more persistent, learnable signals (Jegadeesh & Titman 1993).
 
-    # Next-day return for each stock
-    data['Return_NextDay'] = data.groupby('Ticker')[return_col].shift(-1)
-
-    # Cross-sectional median per date
-    daily_median = data.groupby('Date')['Return_NextDay'].transform('median')
-
-    # Binary label
-    data['Target'] = (data['Return_NextDay'] >= daily_median).astype(int)
-    data.dropna(subset=['Return_NextDay'], inplace=True)
-
-    print("Class distribution:")
-    print(data['Target'].value_counts(normalize=True))  # Expect ~50/50
-    return data
-```
+Cache horizon is embedded in the cached CSV (`_target_horizon` column) so that a
+config change automatically triggers target recomputation on next load.
 
 ---
 
 ## Step 4 — Walk-Forward Fold Generator (`pipeline/walk_forward.py`)
 
-**Status:** ✅ Implemented
+**Status:** ✅ Implemented with rolling and expanding modes
 
 ```
-Timeline (10 years ~ 2520 trading days):
+Windows: Train=252d / Val=63d / Test=63d (rolling by default)
+Date range: 2019-01-01 → 2024-12-31
 
-Fold 1: |---Train 500---|---Val 125---|---Test 125---|
-Fold 2:                 |---Train 500---|---Val 125---|---Test 125---|
-...
-Fold N:                                                                   |---Train 500---|---Val 125---|---Test 125---|
+Rolling mode:
+  Fold 1: |---Train 252---|---Val 63---|---Test 63---|
+  Fold 2:                 |---Train 252---|---Val 63---|---Test 63---|
+  ...
 
-Expect 12-14 folds total (2015-2024 data).
+Expanding mode:
+  Fold 1: |---Train 252---|---Val 63---|---Test 63---|
+  Fold 2: |------Train 315------|---Val 63---|---Test 63---|
+  ...
 ```
 
-```python
-def generate_walk_forward_folds(dates_sorted, train_days=500, val_days=125, test_days=125):
-    total = len(dates_sorted)
-    window = train_days + val_days + test_days
-    folds = []
-    start = 0
-    while start + window <= total:
-        train_end = start + train_days
-        val_end   = train_end + val_days
-        test_end  = val_end + test_days
-        folds.append({
-            'fold': len(folds) + 1,
-            'train': (start, train_end),
-            'val':   (train_end, val_end),
-            'test':  (val_end, test_end),
-            'train_start_date': dates_sorted[start],
-            'test_end_date':    dates_sorted[test_end - 1],
-        })
-        start += test_days   # Roll forward by exactly one test period
-    print(f"Generated {len(folds)} folds")
-    return folds
-```
+Minimum 8 folds enforced (assertion). `MAX_FOLDS` config cap for development.
+Configurable `stride_days` (default = `TEST_DAYS`). Full boundary dates stored in each fold dict.
 
 ---
 
-## Step 5 — Feature Standardization (`pipeline/standardizer.py`)
+## Step 5 — Preprocessing (`pipeline/standardizer.py`)
 
-**Status:** ✅ Implemented with dual-scaler approach
+**Status:** ✅ Implemented with winsorizer + dual-scaler approach
 
-**CRITICAL:** Always fit the scaler on training data only. Never use test/val statistics.
-Supports both StandardScaler (default) and MinMaxScaler.
+Pipeline per fold:
+1. **Winsorize** (if `WINSORIZE_ENABLED`): clip features at 0.5th/99.5th percentile — fit on train rows, applied to all splits.
+2. **Standardize**: StandardScaler fit on training data, transform val/test.
 
-```python
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-
-def standardize_fold(X_train, X_val, X_test, scaler_type='standard'):
-    """Fit scaler on training data, transform all splits."""
-    if scaler_type == 'minmax':
-        scaler = MinMaxScaler()
-    else:
-        scaler = StandardScaler()
-
-    X_train_s = scaler.fit_transform(X_train)   # fit + transform
-    X_val_s   = scaler.transform(X_val)         # transform only
-    X_test_s  = scaler.transform(X_test)        # transform only
-    return X_train_s, X_val_s, X_test_s, scaler
-```
-
-**Dual Scaler Approach:** Separate scalers are fit for:
-- LSTM-A: 6 features (MACD, RSI_14, ATR_14, Return_1d, Return_5d, Return_21d)
-- LSTM-B/Baselines: 8 features (Return_1d, Return_5d, Return_21d, RSI_14, BB_PctB, RealVol_20d, Volume_Ratio, SectorRelReturn)
+Separate scalers are fit for baseline features vs LSTM-B features (different feature sets).
 
 ---
 
 ## Step 6 — Models
 
-**Status:** ✅ All 5 models + Ensemble implemented
+**Status:** ✅ 4 base models + Ensemble implemented (LSTM-A removed)
 
 ### Summary Table
 
 | Model | Features | Architecture | Notes |
 |---|---|---|---|
-| LR | 8 (LSTM-B) | Logistic Regression | L2 regularization, CV grid search |
-| RF | 8 (LSTM-B) | Random Forest | Val-based hyperparameter selection |
-| XGBoost | 8 (LSTM-B) | Gradient Boosting | Early stopping on val AUC |
-| LSTM-A | 6 (with momentum) | Hyperparameter-tuned | Two-phase Bhandari §3.3 tuning |
-| LSTM-B | 8 (with momentum) | Fixed (64h, 2L, 0.2d) | No architecture search |
-| Ensemble | All 5 | Mean probability | Average of all model predictions |
+| LR | LSTM-B features | Logistic Regression | L2 regularization, TimeSeriesSplit CV |
+| RF | LSTM-B features | Random Forest | Val-based hyperparameter selection |
+| XGBoost | LSTM-B features | Gradient Boosting | Early stopping on val AUC |
+| LSTM-B | LSTM-B features | 32h, 1L, 0.0d (fixed) | Optional Bhandari-style tuning |
+| Ensemble | LR + LSTM-B | Mean probability | RF and XGBoost excluded (negative Sharpe) |
 
-### 6a. Logistic Regression (`models/baselines.py`)
+### 6a. Logistic Regression
 
-**Status:** ✅ Implemented
+L2-regularised with TimeSeriesSplit(n_splits=5) grid-search over C.
+Also outputs `LR_coef` (absolute normalized coefficient) for feature importance.
 
-```python
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
-
-def train_logistic(X_train, y_train):
-    param_grid = {'C': [0.0001, 0.001, 0.01, 0.1, 1.0, 10.0, 100.0]}
-    lr = LogisticRegression(penalty='l2', solver='lbfgs', max_iter=1000, random_state=42)
-    tscv = TimeSeriesSplit(n_splits=5)
-    cv = GridSearchCV(lr, param_grid, cv=tscv, scoring='roc_auc', n_jobs=-1)
-    cv.fit(X_train, y_train)
-    print(f"Best C: {cv.best_params_['C']:.4f}, CV AUC: {cv.best_score_:.4f}")
-    return cv.best_estimator_
-```
-
-### 6b. Random Forest (`models/baselines.py`)
-
-**Status:** ✅ Implemented
+### 6b. Random Forest
 
 Validation-based hyperparameter selection (not CV) to preserve time-series order.
+Grid: `n_estimators` [300], `max_depth` [5, 10], `min_samples_leaf` [30, 50].
+Outputs `RF_importance` (mean decrease impurity, normalised) for feature importance.
 
-```python
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import roc_auc_score
-
-def train_random_forest(X_train, y_train, X_val, y_val):
-    best_auc, best_model = 0, None
-    for n_est in [300, 500]:
-        for depth in [5, 10, 15]:
-            for min_leaf in [30, 50]:
-                rf = RandomForestClassifier(
-                    n_estimators=n_est,
-                    max_depth=depth,
-                    min_samples_leaf=min_leaf,
-                    max_features='sqrt',
-                    n_jobs=-1,
-                    random_state=42,
-                )
-                rf.fit(X_train, y_train)
-                auc = roc_auc_score(y_val, rf.predict_proba(X_val)[:, 1])
-                if auc > best_auc:
-                    best_auc, best_model = auc, rf
-    print(f"Best RF AUC: {best_auc:.4f}")
-    return best_model
-```
-
-### 6c. XGBoost (`models/baselines.py`)
-
-**Status:** ✅ Implemented
+### 6c. XGBoost
 
 Grid search with early stopping on validation AUC.
+Grid: `max_depth` [3,4,5], `eta` [0.01], `subsample` [0.6,0.7].
+L1 regularization (alpha=0.1), L2 (lambda=1.0), colsample_bytree=0.5.
+Outputs `XGB_gain` (average gain, normalised) for feature importance.
 
-```python
-import xgboost as xgb
+### 6d. LSTM-B
 
-def train_xgboost(X_train, y_train, X_val, y_val):
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval   = xgb.DMatrix(X_val,   label=y_val)
+Fixed architecture: 32 hidden, 1 layer, no dropout, batch=256, seq_len=30.
+Temporal split (by date, not ticker) to prevent temporal leakage.
+Optional Bhandari §3.3-style two-phase tuning (Phase 1: optimizer/lr/batch; Phase 2: arch):
+- Tuning is only run on fold 1 (`LSTM_B_TUNE_ON_FIRST_FOLD_ONLY=True`), then reused.
+- Selection criterion: best validation **net Sharpe** (trading metric), not AUC.
+- Return-aware guardrail: default is kept if tuned candidate underperforms on val returns.
+Per-fold permutation importance computed for LSTM-B (feature drop in AUC after shuffling).
+Gradient clipping at `LSTM_MAX_GRAD_NORM=1.0`.
 
-    best_auc, best_model = 0, None
-    for depth in [3, 4, 5]:
-        for eta in [0.01]:
-            for subsample in [0.6, 0.7]:
-                params = {
-                    'max_depth':        depth,
-                    'eta':              eta,
-                    'subsample':        subsample,
-                    'colsample_bytree': 0.5,  # Reduced for regularization
-                    'objective':        'binary:logistic',
-                    'eval_metric':      'auc',
-                    'alpha':            0.1,  # L1 regularization
-                    'lambda':           1.0,  # L2 regularization
-                    'seed':             42,
-                }
-                model = xgb.train(
-                    params, dtrain,
-                    num_boost_round=1000,
-                    evals=[(dval, 'val')],
-                    early_stopping_rounds=50,
-                    verbose_eval=False,
-                )
-                auc = model.best_score
-                if auc > best_auc:
-                    best_auc, best_model = auc, model
-    print(f"Best XGB AUC: {best_auc:.4f}")
-    return best_model
-```
+### 6e. Ensemble
 
-### 6d. LSTM-A and LSTM-B (`models/lstm_model.py`)
+Mean probability of **LR + LSTM-B only** (RF and XGBoost excluded due to negative Sharpe
+in large-cap universe). Controlled by `include_lstm_b_in_ensemble` in `UniverseConfig`.
 
-**Status:** ✅ Implemented with temporal split and optional tuning
+### 6f. Feature Importance (all models)
 
-**Two LSTM variants** following Bhandari et al. (2022):
-
-| Model | Features | Architecture | Tuning |
-|---|---|---|---|
-| LSTM-A | 6 (MACD, RSI_14, ATR_14, Return_1d, Return_5d, Return_21d) | Hyperparameter-tuned | Two-phase grid search |
-| LSTM-B | 8 (Return_1d, Return_5d, Return_21d, RSI_14, BB_PctB, RealVol_20d, Volume_Ratio, SectorRelReturn) | Fixed | 64 hidden, 2 layers, 0.2 dropout |
-
-**Architecture (StockLSTMTunable):**
-
-```python
-import torch
-import torch.nn as nn
-
-class StockLSTMTunable(nn.Module):
-    def __init__(self, input_size, hidden_size=64, num_layers=2, dropout=0.2):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            dropout=dropout if num_layers > 1 else 0,
-            batch_first=True,
-        )
-        self.dropout = nn.Dropout(dropout)
-        self.fc1 = nn.Linear(hidden_size, 16)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(16, 2)  # 2-class output (CrossEntropyLoss)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        out = self.dropout(out[:, -1, :])  # last timestep only
-        out = self.relu(self.fc1(out))
-        return self.fc2(out)  # logits
-```
-
-**LSTM-A Two-Phase Tuning (Bhandari §3.3):**
-
-1. **Phase 1:** optimizer (adam/adagrad/nadam), learning rate (0.1/0.01/0.001), batch size (32/64/128)
-2. **Phase 2:** hidden_size (16/32/64), num_layers (1/2), dropout (0.1/0.2)
-
-**Temporal Split (Critical Fix):**
-
-Instead of ticker-based splitting, we now use **temporal splitting** to ensure proper
-train/val/test chronological separation:
-
-```python
-def prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=0.2):
-    """
-    Build LSTM sequences with TEMPORAL train/val split (not ticker-based).
-
-    This fixes the bug where ticker-based splits could leak future data
-    into training when tickers had different date ranges.
-    """
-    # Get chronological split point for train/val
-    dates = sorted(df_train_fold['Date'].unique())
-    val_split_idx = int(len(dates) * (1 - val_ratio))
-    val_split_date = dates[val_split_idx]
-
-    df_train = df_train_fold[df_train_fold['Date'] < val_split_date]
-    df_val = df_train_fold[df_train_fold['Date'] >= val_split_date]
-
-    # Build sequences (with train as historical lookback for val/test)
-    ...
-```
-
-### 6e. Ensemble Model
-
-**Status:** ✅ Implemented in main.py
-
-The ensemble model averages predictions from all 5 base models:
-
-```python
-ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
-ensemble_preds['Prob_ENS'] = ensemble_preds[ensemble_cols].mean(axis=1)
-```
+`extract_feature_importances()` in `models/baselines.py` extracts per-fold importance from
+all three baseline models. LSTM-B uses permutation importance (AUC drop after feature shuffle).
+Saved to `reports/{universe}_feature_importances_per_fold.csv` and `..._avg.csv`.
 
 ---
 
 ## Step 7 — Trading Signals (`backtest/signals.py`)
 
-**Status:** ✅ Implemented with smoothing and holding constraints
+**Status:** ✅ Implemented with smoothing, holding constraints, and confidence threshold
 
-Signal generation with:
-- Cross-sectional z-scoring for robust ranking
-- EMA smoothing to reduce turnover
-- Minimum holding period constraint
+Pipeline:
+1. **EMA smoothing** (if `SIGNAL_SMOOTH_ALPHA > 0`): per-ticker exponential smoothing.
+2. **Signal generation**: cross-sectional z-scoring of probabilities, then rank top-K as Long,
+   bottom-K as Short. Slots below confidence threshold are filtered to Hold.
+3. **Holding period constraint** (`MIN_HOLDING_DAYS=5`): once a position is entered,
+   held for at least 5 days before exit or flip.
+4. **Diagnostics**: `compute_turnover_and_holding_stats()` reports mean daily turnover and
+   average holding period per model.
+5. **Signal ablation** (`RUN_SIGNAL_ABLATION=False`): compares raw ranking vs full pipeline.
 
-```python
-def smooth_probabilities(preds_df, prob_col, alpha=0.3):
-    """Apply per-ticker exponential smoothing to reduce turnover."""
-    preds_df = preds_df.sort_values(['Ticker', 'Date']).copy()
-    smoothed_col = f'{prob_col}_Smooth'
-
-    parts = []
-    for ticker, group in preds_df.groupby('Ticker'):
-        g = group.sort_values('Date').copy()
-        g[smoothed_col] = g[prob_col].ewm(alpha=alpha, adjust=False).mean()
-        parts.append(g)
-
-    return pd.concat(parts)
-
-
-def apply_holding_period_constraint(signals_df, min_hold_days=5):
-    """Enforce minimum holding period to reduce turnover."""
-    # Once a position is entered, must hold for min_hold_days
-    # before allowing exit or flip
-    ...
-
-
-def generate_signals(predictions_df, k=10, prob_col=None,
-                    use_cross_sectional_z=True):
-    """
-    Generate Long/Short/Hold signals with optional z-scoring.
-
-    With use_cross_sectional_z=True, probabilities are z-scored
-    within each day's cross-section before ranking.
-    """
-    results = []
-    for date, group in predictions_df.groupby('Date'):
-        g = group.copy()
-
-        # Compute score (ensemble or single model)
-        if prob_col is None:
-            prob_cols = [c for c in g.columns if c.startswith('Prob_')]
-            g['Score'] = g[prob_cols].mean(axis=1)
-        else:
-            g['Score'] = g[prob_col]
-
-        # Cross-sectional z-scoring
-        if use_cross_sectional_z:
-            g['Score'] = (g['Score'] - g['Score'].mean()) / (g['Score'].std() + 1e-10)
-
-        # Rank and assign signals
-        g = g.sort_values('Score', ascending=False)
-        g['Signal'] = 'Hold'
-        g.iloc[:k, g.columns.get_loc('Signal')] = 'Long'
-        g.iloc[-k:, g.columns.get_loc('Signal')] = 'Short'
-
-        results.append(g)
-
-    return pd.concat(results)
-```
+**`invert_signals` flag** (`INVERT_SIGNALS=True` for large-cap): applied at portfolio level —
+Long positions earn Short leg returns and vice versa. Classification metrics evaluated on
+`(1 - prob)` when `invert_signals=True`.
 
 ---
 
 ## Step 8 — Portfolio & Transaction Costs (`backtest/portfolio.py`)
 
-**Status:** ✅ Implemented
+**Status:** ✅ Implemented with slippage support
 
-```python
-def compute_portfolio_returns(signals_df, tc_bps=5, k=10):
-    """
-    Daily equal-weighted long-short portfolio return with transaction costs.
-
-    Transaction cost model:
-    - TC per half-turn (buy or sell)
-    - Long<->Short flip = 2 half-turns
-    - Each position change affects 1/(2*k) of portfolio
-    """
-    tc_per_turn = tc_bps / 10_000
-    daily = []
-    prev_signals = {}
-
-    for date, group in signals_df.groupby('Date'):
-        longs  = group[group['Signal'] == 'Long']
-        shorts = group[group['Signal'] == 'Short']
-
-        long_ret  = longs['Return_NextDay'].mean()  if len(longs)  > 0 else 0.0
-        short_ret = shorts['Return_NextDay'].mean() if len(shorts) > 0 else 0.0
-        gross_ret = long_ret - short_ret
-
-        # Count position changes
-        curr = dict(zip(group['Ticker'], group['Signal']))
-        turnover = 0
-        for ticker, signal in curr.items():
-            prev = prev_signals.get(ticker, 'Hold')
-            if signal != prev:
-                if (signal == 'Long' and prev == 'Short') or \
-                   (signal == 'Short' and prev == 'Long'):
-                    turnover += 2  # flip = 2 half-turns
-                else:
-                    turnover += 1  # enter or exit = 1 half-turn
-
-        # TC as fraction of portfolio affected
-        tc = turnover * tc_per_turn / (2 * k)
-        net_ret = gross_ret - tc
-        prev_signals = curr
-
-        daily.append({
-            'Date': date,
-            'Gross_Return': gross_ret,
-            'Net_Return': net_ret,
-            'Long_Return': long_ret,
-            'Short_Return': short_ret,
-            'TC': tc,
-            'Turnover': turnover,
-        })
-
-    return pd.DataFrame(daily).set_index('Date')
-```
+Equal-weighted long-short portfolio with:
+- TC model: `TC_BPS` per half-turn (buy or sell). Flip = 2 half-turns.
+- Slippage: `SLIPPAGE_BPS` per half-turn (additive to TC).
+- `invert_signals` parameter: passes through from universe config.
+- Position fraction: TC per-position scaled by `1 / (2 * K_STOCKS)`.
 
 ---
 
 ## Step 9 — Performance Metrics (`backtest/metrics.py`)
 
-**Status:** ✅ Implemented with Daily AUC
+**Status:** ✅ Implemented with Daily AUC and sub-period analysis
 
-```python
-def compute_metrics(returns_series, rf_daily=0.00015):
-    """Compute risk-return metrics."""
-    r = returns_series.dropna()
-    mean_d   = r.mean()
-    std_d    = r.std()
-    excess   = r - rf_daily
-    sharpe   = (excess.mean() / excess.std()) * np.sqrt(252) if excess.std() > 0 else 0
+**Risk-return metrics** (Table T5): N Days, Mean Daily Return, Annualised Return, Annualised Std Dev,
+Sharpe Ratio, Sortino Ratio, Max Drawdown, Calmar Ratio, Win Rate, VaR 1%.
 
-    downside = r[r < rf_daily]
-    if len(downside) > 1 and downside.std() > 0:
-        sortino  = ((mean_d - rf_daily) / downside.std()) * np.sqrt(252)
-    else:
-        sortino = np.inf if (mean_d - rf_daily) > 0 else 0.0
+**Classification metrics** (Table T8): Accuracy, AUC-ROC, F1 Score, Daily AUC (mean/std).
+Daily AUC measures within-day ranking quality — more appropriate for cross-sectional strategies.
+When `invert_signals=True`, all metrics are computed on `(1 - prob)`.
 
-    cum      = (1 + r).cumprod()
-    max_dd   = ((cum - cum.cummax()) / cum.cummax()).min()
-    ann_ret  = (1 + mean_d) ** 252 - 1
-
-    return {
-        'N Days':                 len(r),
-        'Mean Daily Return (%)':  round(mean_d * 100, 4),
-        'Annualized Return (%)':  round(ann_ret * 100, 2),
-        'Annualized Std Dev (%)': round(std_d * np.sqrt(252) * 100, 2),
-        'Sharpe Ratio':           round(sharpe, 3),
-        'Sortino Ratio':          round(sortino, 3),
-        'Max Drawdown (%)':       round(max_dd * 100, 2),
-        'Calmar Ratio':           round(ann_ret / abs(max_dd), 3) if max_dd != 0 else 0.0,
-        'Win Rate (%)':           round((r > 0).mean() * 100, 2),
-        'VaR 1% (%)':             round(np.percentile(r, 1) * 100, 4),
-    }
-
-
-def evaluate_classification(y_true, y_prob, threshold=0.5):
-    """Binary classification metrics."""
-    y_pred = (np.asarray(y_prob) >= threshold).astype(int)
-    return {
-        'Accuracy (%)': round(accuracy_score(y_true, y_pred) * 100, 2),
-        'AUC-ROC':      round(roc_auc_score(y_true, y_prob), 4),
-        'F1 Score':     round(f1_score(y_true, y_pred), 4),
-    }
-
-
-def compute_daily_auc(predictions_df, prob_col, target_col='Target'):
-    """
-    Compute average AUC-ROC per day (cross-sectional ranking quality).
-
-    This metric is more appropriate for ranking strategies than pooled AUC
-    because it measures within-day ranking ability, which is what the
-    signal generation actually uses.
-
-    NOTE: Pooled AUC may differ from daily AUC because pooled AUC measures
-    global ranking while daily AUC measures within-day ranking.
-    """
-    daily_aucs = []
-
-    for date, group in predictions_df.groupby('Date'):
-        y_true = group[target_col].values
-        y_prob = group[prob_col].values
-
-        # AUC requires both classes present
-        if len(np.unique(y_true)) < 2:
-            continue
-
-        try:
-            auc = roc_auc_score(y_true, y_prob)
-            daily_aucs.append(auc)
-        except ValueError:
-            continue
-
-    return {
-        'Daily AUC (mean)': round(np.mean(daily_aucs), 4),
-        'Daily AUC (std)': round(np.std(daily_aucs), 4),
-        'Days with valid AUC': len(daily_aucs),
-    }
-```
+**Sub-period analysis** (Table T6): Metrics broken down by market regime.
 
 ---
 
-## Step 10 — main.py Pipeline Overview
+## Step 10 — Evaluation Utilities (`evaluation/metrics_utils.py`)
 
-**Status:** ✅ Implemented with ensemble and tuning options
+**Status:** ✅ Implemented
 
-The main pipeline orchestrates the full walk-forward validation process:
+- `binary_auc_safe()`: AUC with graceful handling of degenerate cases.
+- `classification_sanity_checks()`: validates probabilities are in [0,1], non-constant, etc.
+- `log_split_balance()`: logs class balance per fold split to detect target drift.
 
-```python
-# main.py (simplified overview)
+---
 
-from config import *
-from pipeline.data_loader import download_and_save
-from pipeline.features import (
-    build_feature_matrix, compute_wavelet_thresholds,
-    apply_wavelet_denoising_causal, recompute_features_from_denoised
-)
-from pipeline.targets import create_targets
-from pipeline.walk_forward import generate_walk_forward_folds
-from models.baselines import train_logistic, train_random_forest, train_xgboost
-from models.lstm_model import train_lstm_a, train_lstm_b, tune_lstm_hyperparams
-from backtest.signals import generate_signals, smooth_probabilities, apply_holding_period_constraint
-from backtest.portfolio import compute_portfolio_returns
-from backtest.metrics import compute_metrics, evaluate_classification, compute_daily_auc
+## Step 11 — Fold Reporting (`pipeline/fold_reporting.py`)
 
-import torch
-device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+**Status:** ✅ Implemented
 
-ENABLE_LSTM_TUNING = False  # Only respected when LSTM_A_DEV_MODE = False
+When `SAVE_FOLD_REPORTS=True`, saves a per-fold JSON artifact under
+`reports/fold_reports/fold_{N}.json` with split sizes, dates, class balance,
+and validation AUC for each fold. Stale fold reports are cleared at the start of each run.
 
-def main(load_cached=True):
-    """
-    Parameters
-    ----------
-    load_cached : bool
-        If True (default), load from data/processed/features.csv.
-        Set False to re-download and recompute.
-    """
-    set_global_seed(config.RANDOM_SEED)
+---
 
-    # 1. Load data (from cache or download fresh)
-    data = pd.read_csv('data/processed/features.csv', parse_dates=['Date'])
+## Step 12 — main.py Pipeline Overview
 
-    # 2. Generate walk-forward folds
-    dates = sorted(data['Date'].unique())
-    folds = generate_walk_forward_folds(dates, TRAIN_DAYS, VAL_DAYS, TEST_DAYS)
+**Status:** ✅ Implemented with full orchestration
 
-    # 3. Train models per fold
-    all_preds = []
-    tuning_results = []
+Entry points:
+- `main(load_cached=True)` — CLI entry point.
+- `run_walk_forward_pipeline(load_cached, train_days, reports_dir)` — full pipeline.
 
-    for fold in folds:
-        df_tr = data[data['Date'].isin(dates[fold['train'][0]:fold['train'][1]])]
-        df_v  = data[data['Date'].isin(dates[fold['val'][0]:fold['val'][1]])]
-        df_ts = data[data['Date'].isin(dates[fold['test'][0]:fold['test'][1]])]
+**Pipeline flags:**
+- `RUN_BASELINES` (True): enable/disable LR, RF, XGBoost.
+- `RUN_LSTMS` (True): enable/disable LSTM-B.
+- All results prefixed by `config.UNIVERSE_MODE` in reports dir.
 
-        # CAUSAL wavelet denoising per-fold
-        if config.USE_WAVELET_DENOISING:
-            thresholds = compute_wavelet_thresholds(df_tr)
-            df_tr = apply_wavelet_denoising_causal(df_tr, thresholds)
-            df_v  = apply_wavelet_denoising_causal(df_v, thresholds)
-            df_ts = apply_wavelet_denoising_causal(df_ts, thresholds)
-
-            # Recompute features (but keep original targets)
-            df_tr = recompute_features_from_denoised(df_tr)
-            df_v  = recompute_features_from_denoised(df_v)
-            df_ts = recompute_features_from_denoised(df_ts)
-
-        # Standardize (dual scaler approach)
-        X_tr_b_s, X_v_b_s, X_ts_b_s, _ = standardize_fold(
-            df_tr[BASELINE_FEATURE_COLS].values,
-            df_v[BASELINE_FEATURE_COLS].values,
-            df_ts[BASELINE_FEATURE_COLS].values,
-        )
-
-        y_tr = df_tr[TARGET_COL].values
-        y_v  = df_v[TARGET_COL].values
-
-        # Train baseline models
-        lr_m  = train_logistic(X_tr_b_s, y_tr)
-        rf_m  = train_random_forest(X_tr_b_s, y_tr, X_v_b_s, y_v)
-        xgb_m = train_xgboost(X_tr_b_s, y_tr, X_v_b_s, y_v)
-
-        # Train LSTM-A (with optional tuning)
-        df_train_fold = pd.concat([df_tr, df_v])
-        df_test_fold = df_ts.copy()
-
-        X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a, _, _, keys_te_a = \
-            prepare_lstm_a_sequences_temporal_split(df_train_fold, df_test_fold)
-
-        if LSTM_A_DEV_MODE:
-            model_a = train_lstm_a(
-                X_tr_a, y_tr_a, X_val_a, y_val_a, device,
-                optimizer_name=LSTM_A_OPTIMIZER,
-                lr=LSTM_A_LR,
-                hidden_size=LSTM_B_HIDDEN_SIZE,
-                num_layers=LSTM_B_NUM_LAYERS,
-                dropout=LSTM_B_DROPOUT,
-                batch_size=LSTM_A_BATCH,
-            )
-        elif ENABLE_LSTM_TUNING:
-            best_hp_a = tune_lstm_hyperparams(X_tr_a, y_tr_a, X_val_a, y_val_a, device)
-            tuning_results.append({'fold': fold['fold'], 'model': 'LSTM-A', **best_hp_a})
-            model_a = train_lstm_a(X_tr_a, y_tr_a, X_val_a, y_val_a, device, **best_hp_a)
-        else:
-            model_a = train_lstm_a(X_tr_a, y_tr_a, X_val_a, y_val_a, device)
-
-        probs_a = predict_lstm(model_a, X_te_a, device)
-
-        # Train LSTM-B (fixed architecture)
-        X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, _, _, keys_te_b = \
-            prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold)
-
-        model_b = train_lstm_b(X_tr_b, y_tr_b, X_val_b, y_val_b, device)
-        probs_b = predict_lstm(model_b, X_te_b, device)
-
-        # Collect predictions for this fold
-        pred = df_ts.copy()
-        pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1]
-        pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1]
-        pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s))
-        pred['Prob_LSTM_A'] = align_predictions_to_df(probs_a, keys_te_a, df_ts)
-        pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts)
-        pred['Fold'] = fold['fold']
-
-        all_preds.append(pred)
-
-    # 4. Combine folds
-    full_preds = pd.concat(all_preds)
-
-    # 5. Backtest each model + Ensemble
-    model_cols = {
-        'LR': 'Prob_LR',
-        'RF': 'Prob_RF',
-        'XGBoost': 'Prob_XGB',
-        'LSTM-A': 'Prob_LSTM_A',
-        'LSTM-B': 'Prob_LSTM_B',
-    }
-
-    port_returns_gross = {}
-    port_returns_net_5 = {}
-    class_metrics = []
-    all_signals = []
-
-    for model_name, prob_col in model_cols.items():
-        valid_preds = full_preds.dropna(subset=[prob_col])
-
-        # Apply signal smoothing
-        smoothed_preds = smooth_probabilities(valid_preds, prob_col, alpha=SIGNAL_SMOOTH_ALPHA)
-        smoothed_col = f'{prob_col}_Smooth'
-
-        # Generate signals with z-scoring
-        sig_df = generate_signals(smoothed_preds, k=K_STOCKS, prob_col=smoothed_col)
-
-        # Apply minimum holding period
-        sig_df = apply_holding_period_constraint(sig_df, min_hold_days=MIN_HOLDING_DAYS)
-
-        sig_df['Model'] = model_name
-        all_signals.append(sig_df)
-
-        # Compute portfolio returns
-        port_gross = compute_portfolio_returns(sig_df, tc_bps=0, k=K_STOCKS)
-        port_net_5 = compute_portfolio_returns(sig_df, tc_bps=5, k=K_STOCKS)
-
-        port_returns_gross[model_name] = port_gross
-        port_returns_net_5[model_name] = port_net_5
-
-        # Classification metrics (with Daily AUC)
-        y_true = valid_preds[TARGET_COL].values
-        y_prob = valid_preds[prob_col].values
-        cm = evaluate_classification(y_true, y_prob)
-        daily_auc = compute_daily_auc(valid_preds, prob_col, TARGET_COL)
-        cm.update(daily_auc)
-        cm['Model'] = model_name
-        class_metrics.append(cm)
-
-    # 6. Ensemble model
-    ensemble_cols = ['Prob_LR', 'Prob_RF', 'Prob_XGB', 'Prob_LSTM_A', 'Prob_LSTM_B']
-    ensemble_preds = full_preds.dropna(subset=ensemble_cols).copy()
-    ensemble_preds['Prob_ENS'] = ensemble_preds[ensemble_cols].mean(axis=1)
-
-    # Apply smoothing and holding period
-    ensemble_smoothed = smooth_probabilities(ensemble_preds, 'Prob_ENS', alpha=SIGNAL_SMOOTH_ALPHA)
-    sig_df_ens = generate_signals(ensemble_smoothed, k=K_STOCKS, prob_col='Prob_ENS_Smooth')
-    sig_df_ens = apply_holding_period_constraint(sig_df_ens, min_hold_days=MIN_HOLDING_DAYS)
-    sig_df_ens['Model'] = 'Ensemble'
-    all_signals.append(sig_df_ens)
-
-    # Compute ensemble returns
-    port_gross_ens = compute_portfolio_returns(sig_df_ens, tc_bps=0, k=K_STOCKS)
-    port_net_5_ens = compute_portfolio_returns(sig_df_ens, tc_bps=5, k=K_STOCKS)
-
-    port_returns_gross['Ensemble'] = port_gross_ens
-    port_returns_net_5['Ensemble'] = port_net_5_ens
-
-    # Ensemble classification metrics
-    y_true_ens = ensemble_preds[TARGET_COL].values
-    y_prob_ens = ensemble_preds['Prob_ENS'].values
-    cm_ens = evaluate_classification(y_true_ens, y_prob_ens)
-    daily_auc_ens = compute_daily_auc(ensemble_preds, 'Prob_ENS', TARGET_COL)
-    cm_ens.update(daily_auc_ens)
-    cm_ens['Model'] = 'Ensemble'
-    class_metrics.append(cm_ens)
-
-    # 7. Save all results
-    save_all_results(
-        results_dict={
-            'gross': [compute_metrics(port_returns_gross[m]['Gross_Return'])
-                     for m in list(model_cols.keys()) + ['Ensemble']],
-            'net_5': [compute_metrics(port_returns_net_5[m]['Net_Return'])
-                     for m in list(model_cols.keys()) + ['Ensemble']],
-            'classification': class_metrics,
-            'subperiod': compute_subperiod_metrics(port_returns_net_5['Ensemble']['Net_Return']),
-        },
-        daily_returns_dict={...},
-        signals_dict=pd.concat(all_signals),
-        tuning_results=tuning_results,
-        reports_dir='reports'
-    )
-
-    return {
-        'full_preds': full_preds,
-        'port_returns': port_returns_net_5,
-        'class_metrics': class_metrics,
-        'folds': folds,
-    }
-
-if __name__ == '__main__':
-    main(load_cached=True)
-```
-
-**Key Implementation Highlights:**
-
-1. **Causal wavelet denoising** per-fold with training-only thresholds
-2. **Dual scaler approach** for LSTM-A (6 features) vs LSTM-B/baselines (8 features)
-3. **Temporal LSTM sequence splitting** (not ticker-based) to prevent leakage
-4. **Signal smoothing** (EMA) and **minimum holding period** to reduce turnover
-5. **Per-model backtest** + **ensemble** for comprehensive comparison
-6. **Daily AUC metric** to diagnose within-day ranking quality
-7. **Fold-specific seeds** for reproducible per-fold results
+**Key implementation highlights:**
+1. **Universe-aware config**: `_UNIVERSE_CFG` drives `invert_signals`, `k_stocks`, feature sets.
+2. **Deterministic fold seeds**: `fold_seed_base = RANDOM_SEED + fold * 1000`.
+3. **Stale artifact cleanup**: fold_reports/ and training_logs/ cleared at run start.
+4. **Cache horizon check**: detects `TARGET_HORIZON_DAYS` mismatch and auto-recomputes.
+5. **Causal wavelet denoising** (when enabled): thresholds from train only, applied per-split.
+6. **Winsorization + standardisation**: per fold, fit on train only.
+7. **LSTM-B tuning**: optional, first-fold only, return-aware selection.
+8. **LSTM-B permutation importance**: computed per fold on test set.
+9. **Signal pipeline**: smoothing → z-score → threshold → holding constraint.
+10. **Ensemble**: LR + LSTM-B only (RF/XGBoost excluded empirically).
+11. **Per-fold fold reports** saved when `SAVE_FOLD_REPORTS=True`.
+12. **Full predictions CSV** saved for downstream stitching (`combine_and_backtest.py`).
 
 ---
 
@@ -1196,15 +482,17 @@ if __name__ == '__main__':
 | Rule | How to enforce |
 |---|---|
 | Standardize on training data only | `scaler.fit_transform(X_train)`, then `.transform()` on val/test |
+| Winsorize on training quantiles only | `winsorize_fold()` fits on train, applies to all splits |
 | Wavelet thresholds from train only | `compute_wavelet_thresholds(df_train)`, apply to all splits |
 | **CAUSAL wavelet denoising** | **Rolling window: each value uses only historical data** |
 | Never shuffle time-series | `shuffle=False` for all val/test DataLoaders |
-| Tune hyperparameters on val, not test | All early stopping uses val loss only |
-| Features use only data <= t | All pandas rolling windows are causal (no `center=True`) |
-| Target uses only realized t+1 returns | `shift(-1)` on actual realized close prices |
-| No test period feedback | Test fold is evaluated only, never trained on |
+| Tune hyperparameters on val, not test | All early stopping uses val loss / val Sharpe only |
+| Features use only data ≤ t | All rolling windows are causal (no `center=True`) |
+| Target uses only realised N-day returns | `shift(-N)` on actual realised close prices |
 | **Temporal LSTM split** | **Split by date, not by ticker** (prevents leakage across time) |
 | **Target unchanged after denoising** | **Targets remain based on raw returns** (honest evaluation) |
+| Cache horizon tag | `_target_horizon` column detects and repairs stale caches |
+| Fold seed determinism | `fold_seed_base = RANDOM_SEED + fold * 1000` |
 
 ---
 
@@ -1218,11 +506,11 @@ if __name__ == '__main__':
 | T2 | Walk-forward fold dates | `print_fold_summary()` | ✅ |
 | T3 | Hyperparameter configurations | config.py | ✅ |
 | T4 | Daily return characteristics | `daily_returns_*.csv` | ✅ |
-| T5 | Annualized risk-return metrics | `table_T5_*.csv` | ✅ |
-| T6 | Sub-period performance | `table_T6_*.csv` | ✅ |
+| T5 | Annualized risk-return metrics | `{universe}_table_T5_*.csv` | ✅ |
+| T6 | Sub-period performance | `{universe}_table_T6_*.csv` | ✅ |
 | T7 | TC sensitivity | `compute_tc_sensitivity()` | ✅ |
-| T8 | Classification metrics | `table_T8_*.csv` | ✅ (with Daily AUC) |
-| T9 | Feature importance | `rf.feature_importances_` | 📝 TODO |
+| T8 | Classification metrics | `{universe}_table_T8_*.csv` | ✅ (with Daily AUC) |
+| T9 | Feature importance | `{universe}_feature_importances_*.csv` | ✅ |
 
 ### Figures
 
@@ -1232,23 +520,27 @@ if __name__ == '__main__':
 | F2 | LSTM architecture diagram | matplotlib / PowerPoint | 📝 TODO |
 | F3 | Cumulative equity curves | `(1 + r).cumprod()` | 📝 TODO |
 | F4 | Drawdown underwater chart | Rolling max drawdown | 📝 TODO |
-| F5 | Feature importance bar chart | `rf.feature_importances_` | 📝 TODO |
+| F5 | Feature importance bar chart | `generate_feature_importance_plot.py` | ✅ |
 | F6 | Return distribution | seaborn.violinplot | 📝 TODO |
 | F7 | Sharpe vs TC | Loop over TC values | 📝 TODO |
 | F8 | Confusion matrices | sklearn + seaborn | 📝 TODO |
 | F9 | Sub-period performance | seaborn.barplot | 📝 TODO |
 | F10 | Correlation heatmap | seaborn.heatmap | 📝 TODO |
-| F11 | LSTM train/val loss curves | Save epoch losses | 📝 TODO |
+| F11 | LSTM train/val loss curves | Saved epoch CSV in training_logs/ | 📝 TODO |
 | F12 | Feature correlation heatmap | `analysis/feature_correlation.py` | 📝 TODO |
 
 ### Generated Reports
 
 | File | Description | Status |
 |---|---|---|
-| `reports/backtest_summary.txt` | Human-readable performance summary | ✅ |
-| `reports/signals_all_models.csv` | All model signals for analysis | ✅ |
-| `reports/lstm_tuning_results.csv` | LSTM hyperparameter tuning results | ✅ |
-| `outputs/feature_selection_log.txt` | Feature correlation analysis log | ✅ |
+| `{universe}_backtest_summary.txt` | Human-readable performance summary | ✅ |
+| `{universe}_signals_all_models.csv` | All model signals for analysis | ✅ |
+| `{universe}_lstm_tuning_results.csv` | LSTM-B hyperparameter tuning results | ✅ |
+| `{universe}_feature_importances_*.csv` | Per-fold and averaged feature importances | ✅ |
+| `{universe}_full_predictions.csv` | Raw per-fold model probabilities | ✅ |
+| `{universe}_fold_sharpe_per_model.csv` | Fold-level Sharpe diagnostics | ✅ |
+| `fold_reports/fold_N.json` | Per-fold diagnostic artifacts | ✅ |
+| `training_logs/` | LSTM-B epoch-level training CSVs | ✅ |
 
 ---
 
@@ -1262,66 +554,75 @@ if __name__ == '__main__':
 | 2022 bear market | 2022-01-01 to 2022-12-31 | Rate hikes, drawdowns |
 | 2023-2024 AI rally | 2023-01-01 to 2024-12-31 | AI / large-cap concentration |
 
-Compute `compute_subperiod_metrics()` and report in T6 / F9.
+---
+
+## Experiments
+
+### `experiments/train_window_sweep.py`
+
+Compares walk-forward performance across train window lengths:
+`TRAIN_DAYS_CANDIDATES = [504, 756, 1260]` (~2y / ~3y / ~5y).
+Results saved to `reports/train_window_comparison.csv`.
+
+### `experiments/lstm_lr_sweep.py`
+
+LSTM-B learning rate grid sweep: `LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]`.
+Capped at `LSTM_LR_SWEEP_MAX_EPOCHS = 40` for budget control.
+
+### `combine_and_backtest.py`
+
+Stitches together separate baseline and LSTM run predictions when `RUN_BASELINES` and
+`RUN_LSTMS` are run independently (e.g., for parallelism or debugging).
+Loads `{universe}_full_predictions.csv` from both runs and runs combined backtest.
 
 ---
 
 ## Hyperparameter Reference
 
-### LSTM-A (Bhandari-style tuning)
+### LSTM-B (Fixed architecture, optional tuning)
 
-| Parameter | Search Grid | Selected via |
+| Parameter | Value | Grid (if tuned) |
 |---|---|---|
-| Optimizer | adam, adagrad, nadam | Phase 1 grid search |
-| Learning rate | 0.1, 0.01, 0.001 | Phase 1 grid search |
-| Batch size | 32, 64, 128 | Phase 1 grid search |
-| Hidden size | 16, 32, 64 | Phase 2 grid search |
-| Num layers | 1, 2 | Phase 2 grid search |
-| Dropout | 0.1, 0.2 | Phase 2 grid search |
-
-### LSTM-B (Fixed architecture)
-
-| Parameter | Value |
-|---|---|
-| Hidden size | 64 |
-| Num layers | 2 |
-| Dropout | 0.2 |
-| Learning rate | 0.001 |
-| Batch size | 128 |
-| Optimizer | Adam |
-| Sequence length | 60 |
-| Max epochs | 200 |
-| Early stopping patience | 15 |
-| LR scheduler patience | 7 |
-| LR scheduler factor | 0.5 |
+| Hidden size | 32 | [32, 64] |
+| Num layers | 1 | [1, 2] |
+| Dropout | 0.0 | [0.0, 0.2] |
+| Learning rate | 0.001 | [0.0003, 0.001, 0.003] |
+| Batch size | 256 (128 during tuning) | [64, 128] |
+| Optimizer | Adam | [adam, nadam] |
+| Sequence length | 30 | — |
+| Max epochs | 200 (35 during tuning) | — |
+| Early stopping patience | 15 (4 during tuning) | — |
+| LR scheduler patience | 7 | — |
+| LR scheduler factor | 0.5 | — |
+| Weight decay | 1e-4 | — |
+| Gradient clip norm | 1.0 | — |
 
 ### XGBoost
 
-| Parameter | Grid | Default |
+| Parameter | Grid | Fixed |
 |---|---|---|
-| max_depth | 3, 4, 5 | 4 |
-| eta | 0.01 | 0.01 |
-| subsample | 0.6, 0.7 | 0.7 |
-| colsample_bytree | - | 0.5 |
-| alpha (L1) | - | 0.1 |
-| lambda (L2) | - | 1.0 |
-| num_boost_round | 1000 (early stop) | - |
-| early_stopping_rounds | 50 | - |
+| max_depth | 3, 4, 5 | |
+| eta | 0.01 | |
+| subsample | 0.6, 0.7 | |
+| colsample_bytree | | 0.5 |
+| alpha (L1) | | 0.1 |
+| lambda (L2) | | 1.0 |
+| num_boost_round | | 1000 (early stop @ 50) |
 
 ### Random Forest
 
 | Parameter | Grid |
 |---|---|
-| n_estimators | 300, 500 |
-| max_depth | 5, 10, 15 |
+| n_estimators | 300 |
+| max_depth | 5, 10 |
 | min_samples_leaf | 30, 50 |
 | max_features | sqrt |
 
 ### Logistic Regression
 
-| Parameter | Grid |
+| Parameter | Value |
 |---|---|
-| C (inverse regularization) | 1e-4, 1e-3, ..., 1e2 |
+| C | 1e-4, 1e-3, 0.01, 0.1, 1.0, 10.0, 100.0 |
 | penalty | L2 |
 | CV | TimeSeriesSplit(5) |
 
@@ -1329,9 +630,11 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 
 | Parameter | Value | Notes |
 |---|---|---|
-| k (long/short stocks) | 10 | 10 per side out of 70 |
+| k (long/short stocks) | 5 | 5 per side out of 50 large-cap stocks |
 | TC (bps) | 5 | Per half-turn |
-| Signal smoothing alpha | 0.3 | EMA for turnover reduction |
+| Slippage (bps) | 0.0 | Off by default |
+| Signal smoothing alpha | 0.0 | No EMA smoothing (disabled) |
+| Confidence threshold | 0.55 | Sit out low-conviction z-scores |
 | Z-score normalization | True | Cross-sectional |
 | Minimum holding days | 5 | Enforce holding period |
 
@@ -1343,50 +646,60 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 
 1. **Data Pipeline**
    - Download & cleaning (yfinance)
-   - 10 technical features (with multi-day momentum)
-   - Causal wavelet denoising (rolling window)
-   - Binary target (cross-sectional median)
-   - Walk-forward fold generator
+   - Technical features: Return_1d/5d/21d, RSI_14, MACD, ATR_14, BB_PctB, RealVol_20d, Volume_Ratio
+   - Reversal aliases: NegReturn_1d/5d, RSI_Reversal, NegMACD, BB_Reversal
+   - Cross-sectional SectorRelReturn (LOO, configurable winsorization)
+   - Market context features (Market returns, vol, RelToMarket, Beta)
+   - Sector context features (Sector returns, vol, SectorRelZ)
+   - Causal wavelet denoising (rolling window, disabled by default)
+   - Configurable N-day cross-sectional median target (currently 21d)
+   - Walk-forward fold generator (rolling + expanding modes)
+   - Winsorization + standardisation pipeline
 
 2. **Models**
-   - Logistic Regression (CV grid search)
-   - Random Forest (validation-based selection)
-   - XGBoost (early stopping)
-   - LSTM-A (with optional 2-phase tuning)
-   - LSTM-B (fixed architecture)
-   - Ensemble (mean of 5 models)
+   - Logistic Regression (CV grid search + feature importance)
+   - Random Forest (validation-based selection + feature importance)
+   - XGBoost (early stopping + feature importance)
+   - LSTM-B (fixed architecture, optional first-fold tuning, return-aware selection)
+   - Ensemble (LR + LSTM-B mean probability)
+   - LSTM-B permutation importance
 
 3. **Backtest**
-   - Signal generation (with z-scoring)
-   - Probability smoothing (EMA)
-   - Minimum holding period constraint
-   - Transaction cost model
+   - Signal generation (z-scoring, confidence threshold)
+   - Holding period constraint
+   - Transaction cost + slippage model
+   - invert_signals support (large-cap mean reversion)
    - Comprehensive metrics (Sharpe, Sortino, MDD, Calmar, Win Rate, VaR)
    - Daily AUC (within-day ranking quality)
    - Sub-period analysis
+   - Signal ablation study support
 
-4. **Reports**
-   - Table T5 (gross/net returns)
+4. **Reports & Diagnostics**
+   - Table T5 (gross/net returns, universe-prefixed)
    - Table T6 (sub-period performance)
    - Table T8 (classification + Daily AUC)
+   - Feature importances (per-fold + averaged, all 4 models)
    - Daily returns CSV
    - Signals CSV
    - LSTM tuning results CSV
-   - Human-readable summary
+   - Full predictions CSV
+   - Per-fold fold reports (JSON)
+   - LSTM epoch-level training logs
+
+5. **Experiments**
+   - Train window sweep (504/756/1260 days)
+   - LSTM-B learning rate sweep
 
 ### 📝 TODO
 
 1. **Visualization**
-   - All 12 figures (F1-F12)
-   - Feature importance plots
-   - Cumulative return curves
-   - Drawdown charts
-   - LSTM loss curves
+   - Figures F1-F4, F6-F12
+   - Cumulative return curves with drawdown overlay
+   - LSTM loss curves from training_logs/
 
 2. **Analysis**
    - Descriptive statistics (Table T1)
-   - Feature importance (Table T9)
-   - TC sensitivity analysis plots
+   - TC sensitivity analysis plots (T7)
 
 3. **Documentation**
    - Thesis write-up
@@ -1397,55 +710,50 @@ Compute `compute_subperiod_metrics()` and report in T6 / F9.
 
 ## Realistic Expectations
 
-- **Directional accuracy:** 51-54% is a solid result (random = 50%). Do not expect the papers' 53.8%.
-- **Sharpe ratio:** With 70 stocks and k=10, diversification is still materially better than the original 10-stock concept.
-  Still expect lower Sharpe than the papers' 5.83 (which used 500 stocks).
-- **LSTM-A vs LSTM-B:** LSTM-A with 6 features may perform differently than LSTM-B with 8 features.
-  Both include momentum features for improved predictive power.
-- **Ensemble advantage:** Ensemble may outperform individual models by averaging away model-specific biases.
-- **Wavelet denoising impact:** May improve or harm performance — report both scenarios.
-- **Transaction cost sensitivity:** With k=10 positions per side, turnover is more manageable.
-  Signal smoothing and minimum holding period further reduce turnover.
-- **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion
-  creates exploitable patterns.
-- **2022 bear market:** Expect elevated drawdown. Analyze separately in sub-period section.
-- **Sector diversification:** The 70-stock development universe still spans the existing sector labels, providing useful
-  diversification. The SectorRelReturn feature captures relative performance within sectors.
+- **Directional accuracy:** 51-54% is a solid result (random = 50%). With a 21-day target, slightly higher predictability is achievable for large-cap.
+- **Large-cap inversion:** `invert_signals=True` means the model identifies stocks that will underperform and the portfolio shorts the model's "high probability" stocks — mean reversion in liquid large-caps.
+- **Sharpe ratio:** With 50 stocks and k=5, diversification is limited. Expect lower Sharpe than the papers' 5.83 (which used 500 stocks with k=50).
+- **LSTM-B:** Small architecture (32h, 1L) empirically best for the small-data regime (50 stocks, 252-day train window).
+- **Ensemble:** LR + LSTM-B only; RF and XGBoost found to have negative Sharpe in large-cap universe.
+- **Wavelet denoising:** Disabled by default — domain shift risk when applied across OOS folds.
+- **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion creates exploitable patterns.
+- **2022 bear market:** Expect elevated drawdown. Analyse separately in sub-period section.
 
 ---
 
-## Key Technical Improvements
+## Key Technical Changes from Original Design
 
-### 1. Causal Wavelet Denoising
+### 1. Universe Mode System
+**Change:** Single 70-stock fixed universe → configurable `UNIVERSE_MODE` with `UniverseConfig` dataclass.
+**Why:** Enables comparison of large-cap momentum vs small-cap strategies in one codebase.
 
-**Problem:** Original implementation applied wavelet denoising to entire time series, leaking future
-data into training.
+### 2. Removal of LSTM-A
+**Change:** LSTM-A (6 features, two-phase tuning per fold) removed.
+**Why:** LSTM-B with return-aware first-fold tuning is sufficient; LSTM-A added run-time without benefit.
 
-**Solution:** Rolling-window denoising where each value at time t uses only data from [t-window_size, t].
+### 3. Configurable Target Horizon
+**Change:** Fixed 1-day target → configurable `TARGET_HORIZON_DAYS` (currently 21).
+**Why:** 1-day predictability is near-zero for liquid large-caps; 21d target follows Jegadeesh & Titman (1993).
 
-### 2. Temporal LSTM Splitting
+### 4. Walk-Forward Structure
+**Change:** 500/125/125 days → 252/63/63 days (1 year / 1 quarter / 1 quarter).
+**Why:** Matches standard practitioner fold sizing; 6-year sample requires shorter windows.
 
-**Problem:** Ticker-based train/val splits could leak future data when tickers had different date ranges.
+### 5. Signal Inversion for Large-Cap
+**Change:** `invert_signals=True` in `LARGE_CAP_CONFIG`.
+**Why:** Large liquid stocks exhibit mean reversion; shorting model "winners" earns positive returns.
 
-**Solution:** Temporal splitting by date ensures chronological separation.
+### 6. Return-Aware LSTM Tuning
+**Change:** Tuning selection by val Sharpe (not AUC); first fold only.
+**Why:** AUC does not correlate reliably with trading performance. Return-aware selection is more practical.
 
-### 3. Daily AUC Metric
+### 7. Market & Sector Context Features
+**Change:** Added market-wide and sector-level features as optional feature groups.
+**Why:** Relative-to-market and relative-to-sector features provide richer cross-sectional context.
 
-**Problem:** Pooled AUC measures global ranking but strategy uses within-day ranking.
-
-**Solution:** Added daily AUC metric to measure cross-sectional ranking quality per day.
-
-### 4. Signal Smoothing & Holding Constraints
-
-**Problem:** High turnover from daily position changes increased transaction costs.
-
-**Solution:** EMA smoothing (α=0.3) + minimum holding period (5 days) to reduce turnover.
-
-### 5. Ensemble Model
-
-**Problem:** Individual models may have biases or overfitting in different regimes.
-
-**Solution:** Ensemble averages 5 model predictions to improve robustness.
+### 8. Winsorization
+**Change:** Added quantile clipping before standardisation.
+**Why:** Extreme feature outliers (especially in small-cap) destabilise training.
 
 ---
 
@@ -1455,37 +763,10 @@ data into training.
 - Krauss, C., Do, X.A. & Huck, N. (2017). *Deep neural networks, gradient-boosted trees, random forests: Statistical arbitrage on the S&P 500.* European Journal of Operational Research, 259, 689-702.
 - Bhandari, H.N., et al. (2022). *Predicting stock market index using LSTM.* Machine Learning with Applications.
 - Hochreiter, S. & Schmidhuber, J. (1997). Long Short-Term Memory. *Neural Computation*, 9(8), 1735-1780.
+- Jegadeesh, N. & Titman, S. (1993). Returns to buying winners and selling losers. *Journal of Finance*, 48(1), 65-91.
 - Fama, E. (1970). Efficient Capital Markets: A Review of Theory and Empirical Work. *Journal of Finance*, 25(2), 383-417.
 - Chen, T. & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. *KDD 2016*.
 - Donoho, D.L. & Johnstone, I.M. (1994). Ideal spatial adaptation by wavelet shrinkage. *Biometrika*, 81(3), 425-455.
-
----
-
-## Changelog
-
-### 2025-01-XX — Major Implementation Update
-
-**Added:**
-- Multi-day momentum features (Return_5d, Return_21d)
-- Causal wavelet denoising with rolling windows
-- Temporal LSTM sequence splitting
-- Daily AUC metric for within-day ranking quality
-- Signal smoothing (EMA) to reduce turnover
-- Minimum holding period constraint (5 days)
-- Ensemble model (mean of 5 base models)
-- LSTM hyperparameter tuning (optional, Bhandari §3.3)
-
-**Changed:**
-- Feature count: 8 → 10 (added momentum)
-- LSTM-A features: 4 → 6 (added momentum)
-- LSTM-B features: 6 → 8 (added momentum)
-- Wavelet: non-causal → causal (rolling window)
-- LSTM split: ticker-based → temporal (date-based)
-
-**Fixed:**
-- Look-ahead bias in wavelet denoising
-- Data leakage in LSTM sequence preparation
-- High turnover in signal generation
 
 ---
 

@@ -126,3 +126,57 @@ def train_xgboost(
 
     print(f"  XGB best params={best_p}  val AUC={best_auc:.4f}")
     return best_model
+
+
+def extract_feature_importances(
+    lr_model: LogisticRegression,
+    rf_model: RandomForestClassifier,
+    xgb_model: xgb.Booster,
+    feature_cols: list,
+) -> dict:
+    """
+    Extract per-feature importance scores from the three baseline models.
+
+    Returns a dict keyed by feature name, each value a dict with keys
+    'LR_coef', 'RF_importance', 'XGB_gain'.
+
+    LR  : absolute value of the coefficient (magnitude of linear weight).
+    RF  : mean decrease in impurity (sklearn feature_importances_).
+    XGB : average gain across all splits on that feature.
+
+    All three are normalised to sum to 1 so they are comparable across models.
+    Missing XGB features (zero gain) are filled with 0 before normalisation.
+    """
+    n = len(feature_cols)
+    result = {f: {'LR_coef': 0.0, 'RF_importance': 0.0, 'XGB_gain': 0.0}
+              for f in feature_cols}
+
+    # ── LR coefficients ───────────────────────────────────────────────────
+    coef = np.abs(lr_model.coef_).flatten()          # shape (n_features,)
+    coef_norm = coef / (coef.sum() + 1e-12)
+    for i, feat in enumerate(feature_cols):
+        result[feat]['LR_coef'] = float(coef_norm[i])
+
+    # ── RF mean-decrease impurity ──────────────────────────────────────────
+    rf_imp = rf_model.feature_importances_           # shape (n_features,)
+    rf_norm = rf_imp / (rf_imp.sum() + 1e-12)
+    for i, feat in enumerate(feature_cols):
+        result[feat]['RF_importance'] = float(rf_norm[i])
+
+    # ── XGBoost gain ──────────────────────────────────────────────────────
+    # DMatrix without feature names uses 'f0', 'f1', ... internally.
+    raw_gain = xgb_model.get_score(importance_type='gain')   # {f0: val, ...}
+    xgb_arr = np.zeros(n)
+    for fname, val in raw_gain.items():
+        # fname is 'f0', 'f1', etc.  Extract the index.
+        try:
+            idx = int(fname[1:])
+            if idx < n:
+                xgb_arr[idx] = val
+        except ValueError:
+            pass
+    xgb_norm = xgb_arr / (xgb_arr.sum() + 1e-12)
+    for i, feat in enumerate(feature_cols):
+        result[feat]['XGB_gain'] = float(xgb_norm[i])
+
+    return result

@@ -347,7 +347,7 @@ TRAIN_WINDOW_MODE = "rolling"
 TRAIN_DAYS_CANDIDATES = [504, 756, 1260]
 
 # Optional train-only quantile clipping applied before scaler (fit quantiles on train rows)
-WINSORIZE_ENABLED = True
+WINSORIZE_ENABLED = False
 WINSORIZE_LOWER_Q = 0.005
 WINSORIZE_UPPER_Q = 0.995
 

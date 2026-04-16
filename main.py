@@ -41,7 +41,7 @@ from pipeline.walk_forward import generate_walk_forward_folds, print_fold_summar
 from pipeline.standardizer import standardize_fold, winsorize_fold
 from pipeline.fold_reporting import save_fold_report
 from evaluation.metrics_utils import binary_auc_safe, classification_sanity_checks, log_split_balance
-from models.baselines import train_logistic, train_random_forest, train_xgboost
+from models.baselines import train_logistic, train_random_forest, train_xgboost, extract_feature_importances
 from models.lstm_model import (
     prepare_lstm_b_sequences_temporal_split,
     train_lstm_b,
@@ -273,6 +273,24 @@ def run_walk_forward_pipeline(
     # Ensure run-to-run reproducibility for all stochastic components.
     set_global_seed(config.RANDOM_SEED)
 
+    # ── Clear stale fold artifacts from previous runs ────────────────────────
+    # Remove all files in fold_reports/ and training_logs/ so that only
+    # files written by this run remain (avoids stale folds from prior runs
+    # with a different fold count).
+    import glob as _glob
+    import shutil as _shutil
+    for _stale_dir in [
+        os.path.join(reports_dir, 'fold_reports'),
+        os.path.join(os.path.dirname(__file__), 'reports', 'training_logs'),
+    ]:
+        if os.path.isdir(_stale_dir):
+            for _f in _glob.glob(os.path.join(_stale_dir, '*')):
+                try:
+                    os.remove(_f)
+                except Exception:
+                    pass
+            print(f'Cleared stale files from {_stale_dir}')
+
     # ── Steps 1-3: Data ─────────────────────────────────────────────────────
     if load_cached:
         print(f'\nLoading cached {os.path.basename(CACHE_FEATURES_PATH)} ...')
@@ -395,6 +413,8 @@ def run_walk_forward_pipeline(
     all_preds = []
     tuning_results = []  # Store tuning results for thesis reporting
     best_hp_b_global = None  # dict for tuned params or string 'DEFAULT'
+    feat_imp_records = []       # Per-fold baseline importance accumulator (Task 5)
+    lstm_perm_records = []      # Per-fold LSTM-B permutation importance accumulator
 
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"=" * 60}')
@@ -499,6 +519,11 @@ def run_walk_forward_pipeline(
             print('  [XGBoost] fitting...')
             xgb_m = train_xgboost(X_tr_b_s, y_tr, X_v_b_s, y_v)
             print(f'  [XGBoost] fit done in {time.time()-t0:.1f}s')
+
+            # ── Feature importance extraction (Task 5) ───────────────────
+            fold_imp = extract_feature_importances(lr_m, rf_m, xgb_m, BASELINE_FEATURE_COLS)
+            for feat, scores in fold_imp.items():
+                feat_imp_records.append({'Fold': fold['fold'], 'Feature': feat, **scores})
         else:
             print('\n  [Baselines] Skipping LR, RF, XGBoost (RUN_BASELINES=False)')
             lr_m = rf_m = xgb_m = None
@@ -654,8 +679,31 @@ def run_walk_forward_pipeline(
             # LSTM-B inference
             probs_b = predict_lstm(model_b, X_te_b, device)
 
+            # ── LSTM-B permutation importance (Task 5) ───────────────────────
+            baseline_auc = binary_auc_safe(y_te_b, probs_b, log_on_fail=False)
+            if not np.isnan(baseline_auc):
+                n_lstm_feats = X_te_b.shape[2]
+                perm_drops = np.zeros(n_lstm_feats)
+                rng_perm = np.random.default_rng(config.RANDOM_SEED + fold['fold'])
+                for f_idx in range(n_lstm_feats):
+                    X_perm = X_te_b.copy()
+                    # Shuffle this feature across all samples (axis 0), keep time axis intact
+                    X_perm[:, :, f_idx] = rng_perm.permutation(X_perm[:, :, f_idx])
+                    probs_perm = predict_lstm(model_b, X_perm, device)
+                    perm_auc = binary_auc_safe(y_te_b, probs_perm, log_on_fail=False)
+                    drop = baseline_auc - (perm_auc if not np.isnan(perm_auc) else baseline_auc)
+                    perm_drops[f_idx] = max(drop, 0.0)   # clip negatives: not informative
+                perm_norm = perm_drops / (perm_drops.sum() + 1e-12)
+                for f_idx, feat in enumerate(LSTM_B_FEATURES):
+                    lstm_perm_records.append({
+                        'Fold': fold['fold'],
+                        'Feature': feat,
+                        'LSTM_B_perm': float(perm_norm[f_idx]),
+                    })
+
             # Free LSTM-B memory for next fold
-            del model_b, X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b
+            del model_b, X_te_b, y_te_b
+            del X_tr_b, y_tr_b, X_val_b, y_val_b
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
         else:
@@ -695,6 +743,35 @@ def run_walk_forward_pipeline(
         print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM-B={n_lstm_b}')
 
         all_preds.append(pred)
+
+    # ── Save feature importances — all models in one file (Task 5) ──────────
+    if feat_imp_records:
+        fi_per_fold = pd.DataFrame(feat_imp_records)
+
+        # Merge LSTM-B permutation importance (same feature set, join on Fold+Feature)
+        if lstm_perm_records:
+            lstm_df = pd.DataFrame(lstm_perm_records)
+            fi_per_fold = fi_per_fold.merge(lstm_df, on=['Fold', 'Feature'], how='left')
+        else:
+            fi_per_fold['LSTM_B_perm'] = np.nan
+
+        imp_cols = ['LR_coef', 'RF_importance', 'XGB_gain', 'LSTM_B_perm']
+        fi_per_fold.to_csv(
+            f'{reports_dir}/{config.UNIVERSE_MODE}_feature_importances_per_fold.csv',
+            index=False,
+        )
+
+        fi_avg = (
+            fi_per_fold
+            .groupby('Feature')[imp_cols]
+            .mean()
+            .reset_index()
+        )
+        fi_avg.to_csv(
+            f'{reports_dir}/{config.UNIVERSE_MODE}_feature_importances_avg.csv',
+            index=False,
+        )
+        print(f'\nFeature importances saved to {reports_dir}/')
 
     # ── Combine folds ─────────────────────────────────────────────────────────
     full_preds = pd.concat(all_preds).reset_index(drop=True)
