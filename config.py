@@ -391,9 +391,16 @@ SECTOR_WINSORIZE = True
 # ── Feature config (10 active features including momentum + Context features) ────────────────
 SEQ_LEN               = 30
 
-# Context features flags
-MARKET_FEATURES_ENABLED = True
-SECTOR_FEATURES_ENABLED = True
+# Global feature computation flags — control what features.py computes.
+# Must be True if ANY model uses those features.
+MARKET_FEATURES_ENABLED = True   # LR/RF/XGBoost + LSTM-B all use market features
+SECTOR_FEATURES_ENABLED = True   # LSTM-B uses sector features; True so they get computed
+
+# Per-model feature flags — control which features each model actually receives
+BASELINE_MARKET_FEATURES_ENABLED = True   # LR, RF, XGBoost use market features
+BASELINE_SECTOR_FEATURES_ENABLED = False  # LR, RF, XGBoost do NOT use sector features
+LSTM_MARKET_FEATURES_ENABLED = True       # LSTM-B uses market features
+LSTM_SECTOR_FEATURES_ENABLED = True       # LSTM-B uses sector features
 
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
@@ -441,7 +448,28 @@ if SECTOR_FEATURES_ENABLED:
 N_TOTAL_FEATURES = len(ALL_FEATURE_COLS)  # Dynamically computed
 
 # ── Per-model feature sets ────────────────────────────────────────────────────
-LSTM_B_FEATURE_COLS = [
+_MARKET_FEATURE_COLS = [
+    "Market_Return_1d",
+    "Market_Return_5d",
+    "Market_Return_21d",
+    "Market_Vol_20d",
+    "Market_Vol_60d",
+    "RelToMarket_1d",
+    "RelToMarket_5d",
+    "RelToMarket_21d",
+    f"Beta_{BETA_WINDOW}d",
+]
+
+_SECTOR_FEATURE_COLS = [
+    "Sector_Return_1d",
+    "Sector_Return_5d",
+    "Sector_Return_21d",
+    "Sector_Vol_20d",
+    "Sector_Vol_60d",
+    "SectorRelZ_Return_1d",
+]
+
+_CORE_FEATURE_COLS = [
     "Return_1d",
     "Return_5d",        # Weekly momentum
     "Return_21d",       # Monthly momentum
@@ -452,31 +480,18 @@ LSTM_B_FEATURE_COLS = [
     "SectorRelReturn",
 ]
 
-if MARKET_FEATURES_ENABLED:
-    LSTM_B_FEATURE_COLS.extend([
-        "Market_Return_1d",
-        "Market_Return_5d",
-        "Market_Return_21d",
-        "Market_Vol_20d",
-        "Market_Vol_60d",
-        "RelToMarket_1d",
-        "RelToMarket_5d",
-        "RelToMarket_21d",
-        f"Beta_{BETA_WINDOW}d",
-    ])
+LSTM_B_FEATURE_COLS = list(_CORE_FEATURE_COLS)
+if LSTM_MARKET_FEATURES_ENABLED:
+    LSTM_B_FEATURE_COLS.extend(_MARKET_FEATURE_COLS)
+if LSTM_SECTOR_FEATURES_ENABLED:
+    LSTM_B_FEATURE_COLS.extend(_SECTOR_FEATURE_COLS)
 
-if SECTOR_FEATURES_ENABLED:
-    LSTM_B_FEATURE_COLS.extend([
-        "Sector_Return_1d",
-        "Sector_Return_5d",
-        "Sector_Return_21d",
-        "Sector_Vol_20d",
-        "Sector_Vol_60d",
-        "SectorRelZ_Return_1d",
-    ])
-
-# Baselines use LSTM-B features for fair comparison
-BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
+# Baselines (LR, RF, XGBoost): market features only, no sector features
+BASELINE_FEATURE_COLS = list(_CORE_FEATURE_COLS)
+if BASELINE_MARKET_FEATURES_ENABLED:
+    BASELINE_FEATURE_COLS.extend(_MARKET_FEATURE_COLS)
+if BASELINE_SECTOR_FEATURES_ENABLED:
+    BASELINE_FEATURE_COLS.extend(_SECTOR_FEATURE_COLS)
 
 # Trading
 K_STOCKS = 5   # Long top-5, short bottom-5 per day
