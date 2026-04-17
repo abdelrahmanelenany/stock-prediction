@@ -2,7 +2,7 @@
 **Date:** 2026-04-10  
 **Auditor:** Claude Code (automated audit)  
 **Branch:** main  
-**Status at audit:** `DEV_MODE=True`, LSTM-A skipped, Ensemble missing, results for LR/RF/XGB/LSTM-B only
+**Status at audit:** `DEV_MODE=True`, LSTM-A skipped, Ensemble missing, results for LR/RF/XGB/LSTM only
 
 ---
 
@@ -13,7 +13,7 @@ The following five issues **must be resolved before any thesis-quality results a
 | Priority | Issue | Impact |
 |---|---|---|
 | **C1** | `DEV_MODE=True` is hardcoded — LSTM-A is permanently skipped and never appears in reports | All reported results are incomplete; no LSTM-A, no Ensemble |
-| **C2** | `LSTM_B_HIDDEN_SIZE=32 / NUM_LAYERS=1 / DROPOUT=0.0` — architecture is 2× smaller than spec (64/2/0.2) | LSTM-B underperforms spec; comparison invalid |
+| **C2** | `LSTM_B_HIDDEN_SIZE=32 / NUM_LAYERS=1 / DROPOUT=0.0` — architecture is 2× smaller than spec (64/2/0.2) | LSTM underperforms spec; comparison invalid |
 | **C3** | **Ensemble model is not implemented** in `run_walk_forward_pipeline` — absent from all reports | Core contribution (Ensemble) missing entirely |
 | **C4** | `TARGET_HORIZON_DAYS=21` with **daily portfolio rebalancing** — 21-day prediction target but 1-day P&L | Signal-to-portfolio horizon mismatch; thesis rationale required |
 | **C5** | **Hyperparameter tuning replicates** use `val_loss` for early stopping and measure AUC on the **last epoch**, not best-AUC epoch — tuning selects suboptimal configs | All tuned models may use inferior hyperparameters |
@@ -29,7 +29,7 @@ The following five issues **must be resolved before any thesis-quality results a
 | A1 | `config.py` | 88–107 | **FIXED** | `SMALL_CAP_SECTOR_MAP` — all tickers now have correct sector assignments | No action required |
 | A2 | `models/lstm_model.py` | 879, 993–998 | **FIXED** | LSTM early stopping now uses `val_auc` for checkpointing via `_train_lstm_impl` | No action required |
 | A3 | `config.py` | 286; `backtest/signals.py` | Medium | `SIGNAL_CONFIDENCE_THRESHOLD=0.55` applied to z-scored signals. The code is now CORRECT in applying this as a z-score threshold (not raw probability), but 0.55 z-score still silently filters positions when cross-sectional dispersion is low. | Set `SIGNAL_CONFIDENCE_THRESHOLD = 0.0` for pure-ranking behaviour per spec. Document how many positions were filtered in the diagnostics printout. |
-| A4 | `config.py` | 316–318 | **Critical** | `LSTM_B_HIDDEN_SIZE=32`, `LSTM_B_NUM_LAYERS=1`, `LSTM_B_DROPOUT=0.0` — architecture is half the spec (64/2/0.2). With market+sector features enabled, LSTM-B has 23 input features but only 32 hidden units — aggressive compression. | Set `LSTM_B_HIDDEN_SIZE=64`, `LSTM_B_NUM_LAYERS=2`, `LSTM_B_DROPOUT=0.2` to match spec. Update arch tuning grid min values. |
+| A4 | `config.py` | 316–318 | **Critical** | `LSTM_B_HIDDEN_SIZE=32`, `LSTM_B_NUM_LAYERS=1`, `LSTM_B_DROPOUT=0.0` — architecture is half the spec (64/2/0.2). With market+sector features enabled, LSTM has 23 input features but only 32 hidden units — aggressive compression. | Set `LSTM_B_HIDDEN_SIZE=64`, `LSTM_B_NUM_LAYERS=2`, `LSTM_B_DROPOUT=0.2` to match spec. Update arch tuning grid min values. |
 | A5 | `config.py` | 112, 402; `main.py` | **Critical** | `DEV_MODE=True` defined **twice** (lines 112 and 402). The second definition overrides the first. With `DEV_MODE=True`, main.py line 535 (`if not DEV_MODE:`) permanently skips LSTM-A, and line 828–829 excludes LSTM-A from `model_cols`. All existing reports lack LSTM-A. | Set `DEV_MODE=False` for final thesis run. Remove the duplicate definition at line 112. |
 
 ---
@@ -52,15 +52,15 @@ The following five issues **must be resolved before any thesis-quality results a
 
 | ID | File | Line(s) | Severity | Description | Recommended Fix |
 |---|---|---|---|---|---|
-| C1 | `models/lstm_model.py` | 879, 993–998 | **FIXED** | LSTM-A and LSTM-B both checkpoint on best `val_auc` via `_train_lstm_impl`. | No action required |
+| C1 | `models/lstm_model.py` | 879, 993–998 | **FIXED** | LSTM-A and LSTM both checkpoint on best `val_auc` via `_train_lstm_impl`. | No action required |
 | C2 | `models/lstm_model.py` | 151–290 | **OK** | LSTM-A two-phase tuning: Phase 1 (optimizer/lr/batch_size) → Phase 2 (hidden/layers/dropout). Phases are correctly separated; Phase 2 receives best Phase 1 config. | No action required |
 | C3 | `models/lstm_model.py` | 869, 903–910 | **OK** | Gradient clipping at `max_norm=1.0` applied in `_train_lstm_impl` via `LSTM_MAX_GRAD_NORM`. | No action required |
-| C4 | `main.py` | 822–829 | **Critical** | **Ensemble model absent** from `run_walk_forward_pipeline`. The `model_cols` dict only contains LR, RF, XGBoost, LSTM-B (and LSTM-A when not DEV_MODE). CLAUDE.md specifies Ensemble = mean of all 5. | Implement Ensemble after the fold loop: average `Prob_LR`, `Prob_RF`, `Prob_XGB`, `Prob_LSTM_A`, `Prob_LSTM_B` per (Date, Ticker) and run it through the full backtest pipeline. |
+| C4 | `main.py` | 822–829 | **Critical** | **Ensemble model absent** from `run_walk_forward_pipeline`. The `model_cols` dict only contains LR, RF, XGBoost, LSTM (and LSTM-A when not DEV_MODE). CLAUDE.md specifies Ensemble = mean of all 5. | Implement Ensemble after the fold loop: average `Prob_LR`, `Prob_RF`, `Prob_XGB`, `Prob_LSTM_A`, `Prob_LSTM_B` per (Date, Ticker) and run it through the full backtest pipeline. |
 | C5 | `models/lstm_model.py` | 107–148 | High | **Tuning replicate early stopping uses `val_loss`** (not `val_auc`). The AUC for hyperparameter selection is measured on the **final model state** (at training endpoint), NOT at the best-AUC epoch. If AUC peaks before val_loss stops improving, tuning selects inferior configs. | In `_run_tuning_replicates`: track `best_val_auc` and `best_state`, restore before measuring final AUC. This aligns tuning selection with production training behaviour. |
 | C6 | `models/calibration.py` | all | Low | Probability calibration module exists (per-fold, fit on val, apply to test — architecturally correct) but is **not integrated into main.py**. | Optionally wire into the pipeline after LSTM prediction, or document as an unused extension. |
-| C7 | `models/lstm_model.py` | 753–777 | Medium | `LSTMModelB` uses a **single FC layer** (`self.fc = nn.Linear(hidden, 2)`) while `StockLSTMTunable` (used by LSTM-A) uses a **two-layer MLP** (fc1 → ReLU → fc2). This architectural inconsistency makes the comparison between LSTM-A and LSTM-B confounded. | Add a second FC layer to `LSTMModelB` to match `StockLSTMTunable`'s decoder, or document the intentional difference. |
-| C8 | `models/lstm_model.py` | 693–694 | Low | Stale comments: "4 features" for LSTM-A, "6 features" for LSTM-B — LSTM-A has 6 features (after adding momentum), LSTM-B has 23 features when market/sector features enabled. | Update comments to reflect actual feature counts. |
-| C9 | `models/lstm_model.py` | 1196–1200; 936 | Low | `ReduceLROnPlateau` for LSTM-B is stepped on `val_loss` (line 936), but model checkpointing uses `val_auc`. LR reduction fires when loss plateaus but the saved model is the best-AUC epoch. This is a minor inconsistency but unlikely to cause major issues. | Document this or align both to use `val_auc` as the scheduler metric. |
+| C7 | `models/lstm_model.py` | 753–777 | Medium | `LSTMModelB` uses a **single FC layer** (`self.fc = nn.Linear(hidden, 2)`) while `StockLSTMTunable` (used by LSTM-A) uses a **two-layer MLP** (fc1 → ReLU → fc2). This architectural inconsistency makes the comparison between LSTM-A and LSTM confounded. | Add a second FC layer to `LSTMModelB` to match `StockLSTMTunable`'s decoder, or document the intentional difference. |
+| C8 | `models/lstm_model.py` | 693–694 | Low | Stale comments: "4 features" for LSTM-A, "6 features" for LSTM — LSTM-A has 6 features (after adding momentum), LSTM has 23 features when market/sector features enabled. | Update comments to reflect actual feature counts. |
+| C9 | `models/lstm_model.py` | 1196–1200; 936 | Low | `ReduceLROnPlateau` for LSTM is stepped on `val_loss` (line 936), but model checkpointing uses `val_auc`. LR reduction fires when loss plateaus but the saved model is the best-AUC epoch. This is a minor inconsistency but unlikely to cause major issues. | Document this or align both to use `val_auc` as the scheduler metric. |
 
 ---
 
@@ -148,7 +148,7 @@ LOW IMPACT   |  H. Interaction feats I. PBO metric
 ### Tier 1 — Must-Fix Before Any Results Are Credible
 
 1. **Fix `DEV_MODE`** (`config.py` lines 112 + 402): Set `DEV_MODE=False`, remove duplicate definition.
-2. **Fix LSTM-B architecture** (`config.py` lines 316–318): `LSTM_B_HIDDEN_SIZE=64`, `LSTM_B_NUM_LAYERS=2`, `LSTM_B_DROPOUT=0.2`.
+2. **Fix LSTM architecture** (`config.py` lines 316–318): `LSTM_B_HIDDEN_SIZE=64`, `LSTM_B_NUM_LAYERS=2`, `LSTM_B_DROPOUT=0.2`.
 3. **Implement Ensemble model** (`main.py` after fold loop): Average Prob_LR + Prob_RF + Prob_XGB + Prob_LSTM_A + Prob_LSTM_B; run through full backtest.
 4. **Fix tuning replicate AUC measurement** (`lstm_model.py` `_run_tuning_replicates`): Track best-state by val_AUC within the replicate, restore before final AUC measurement.
 5. **Fix `set_global_seed` MPS seed** (`main.py` line 117): Add `torch.mps.manual_seed(seed)`.
@@ -201,7 +201,7 @@ The following CLAUDE.md sections contain outdated or inaccurate information that
 
 ### Section: `Step 6 — Models` (Summary Table)
 
-- Update LSTM-B feature count from "8" to "8 base + 9 market + 6 sector = 23 total (when market/sector features enabled)"
+- Update LSTM feature count from "8" to "8 base + 9 market + 6 sector = 23 total (when market/sector features enabled)"
 - Update Ensemble description to note it is missing from current implementation (see Tier 1 fix)
 - Add note: `DEV_MODE=True` currently disables LSTM-A and Ensemble
 
@@ -226,7 +226,7 @@ The following CLAUDE.md sections contain outdated or inaccurate information that
 - T6 (Sub-period): mark as **broken** until DEV_MODE fix and LSTM-A run
 - Add T7 note: `compute_tc_sensitivity` already includes 15/20/25/30 bps — just call it
 
-### Section: `LSTM-B architecture row in Tables`
+### Section: `LSTM architecture row in Tables`
 
 - Fix: `LSTM_B_HIDDEN_SIZE=32, LSTM_B_NUM_LAYERS=1, LSTM_B_DROPOUT=0.0` until fix is applied
 
@@ -241,14 +241,14 @@ From `reports/large_cap_backtest_summary.txt` (run at time of audit, DEV_MODE=Tr
 | LR | 0.195 | 9.13% | -40.88% |
 | RF | 0.227 | 9.62% | -41.49% |
 | XGBoost | -0.044 | 2.80% | -49.41% |
-| LSTM-B | **0.434** | 15.58% | -42.26% |
+| LSTM | **0.434** | 15.58% | -42.26% |
 | LSTM-A | *(skipped)* | — | — |
 | Ensemble | *(not implemented)* | — | — |
 
 **Key observations:**
 - Classification AUC ≈ 0.51–0.53 after signal inversion (`invert_signals=True`). Raw model AUC ≈ 0.47–0.49 — models are anti-predictive on large-cap. This is an empirical mean-reversion finding requiring justification.
-- LSTM-B net Sharpe of 0.434 with the current suboptimal architecture (32/1/0.0) may improve further after architecture fix. Results should be re-run after Tier 1 fixes.
-- Transaction costs erode Sharpe significantly: LR drops from 0.361 (gross) to 0.195 (net), LSTM-B from 0.569 to 0.434.
+- LSTM net Sharpe of 0.434 with the current suboptimal architecture (32/1/0.0) may improve further after architecture fix. Results should be re-run after Tier 1 fixes.
+- Transaction costs erode Sharpe significantly: LR drops from 0.361 (gross) to 0.195 (net), LSTM from 0.569 to 0.434.
 
 ---
 

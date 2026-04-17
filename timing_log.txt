@@ -248,7 +248,7 @@ Saved full cache (with targets) to data/processed/features.csv
 
 Feature sets:
   LSTM-A: ['MACD', 'RSI_14', 'ATR_14', 'Return_1d', 'Return_5d', 'Return_21d'] (6 features)
-  LSTM-B: ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d'] (23 features)
+  LSTM: ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d'] (23 features)
   Baselines (LR/RF/XGB): ['Return_1d', 'Return_5d', 'Return_21d', 'RSI_14', 'BB_PctB', 'RealVol_20d', 'Volume_Ratio', 'SectorRelReturn', 'Market_Return_1d', 'Market_Return_5d', 'Market_Return_21d', 'Market_Vol_20d', 'Market_Vol_60d', 'RelToMarket_1d', 'RelToMarket_5d', 'RelToMarket_21d', 'Beta_60d', 'Sector_Return_1d', 'Sector_Return_5d', 'Sector_Return_21d', 'Sector_Vol_20d', 'Sector_Vol_60d', 'SectorRelZ_Return_1d'] (23 features)
 Generated 44 folds mode=rolling stride=125 (train=500, val=125d, test=125d, total dates=6227)
 
@@ -432,77 +432,77 @@ INFO pipeline: [fold1 test] class balance 0:3750, 1:3750 (n=7500)
   [LSTM-A] stopped: early_stop_patience | best_epoch=21 | best_val_loss=0.6927
   [LSTM-A] training log: /Users/abdelrahmanelenany/Documents/Study/Bachelor Thesis/stock-prediction/pipeline/../models/../reports/training_logs/fold1_lstm-a.csv
   [LSTM-A]  fit done in 122.5s
-  [LSTM-B]  building sequences & training...
-    LSTM-B sequences: train=26245, val=7500, test=7500
+  [LSTM]  building sequences & training...
+    LSTM sequences: train=26245, val=7500, test=7500
 
-LSTM-B:   0%|          | 0/200 [00:00<?, ?epoch/s][AINFO models.lstm_model: [LSTM-B] epoch 1/200 train_loss=0.69371 tr_eval=0.69090 val_loss=0.69282 lr=1.00e-03 tr_auc=0.5414 va_auc=0.5217
+LSTM:   0%|          | 0/200 [00:00<?, ?epoch/s][AINFO models.lstm_model: [LSTM] epoch 1/200 train_loss=0.69371 tr_eval=0.69090 val_loss=0.69282 lr=1.00e-03 tr_auc=0.5414 va_auc=0.5217
 
-LSTM-B:   0%|          | 0/200 [00:03<?, ?epoch/s, val_loss=0.6928, best=0.6928][A
-LSTM-B:   0%|          | 1/200 [00:03<11:54,  3.59s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM-B] epoch 2/200 train_loss=0.69210 tr_eval=0.68986 val_loss=0.69263 lr=1.00e-03 tr_auc=0.5480 va_auc=0.5254
+LSTM:   0%|          | 0/200 [00:03<?, ?epoch/s, val_loss=0.6928, best=0.6928][A
+LSTM:   0%|          | 1/200 [00:03<11:54,  3.59s/epoch, val_loss=0.6928, best=0.6928][AINFO models.lstm_model: [LSTM] epoch 2/200 train_loss=0.69210 tr_eval=0.68986 val_loss=0.69263 lr=1.00e-03 tr_auc=0.5480 va_auc=0.5254
 
-LSTM-B:   0%|          | 1/200 [00:07<11:54,  3.59s/epoch, val_loss=0.6926, best=0.6926][A
-LSTM-B:   1%|          | 2/200 [00:07<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM-B] epoch 3/200 train_loss=0.69034 tr_eval=0.68851 val_loss=0.69259 lr=1.00e-03 tr_auc=0.5575 va_auc=0.5290
+LSTM:   0%|          | 1/200 [00:07<11:54,  3.59s/epoch, val_loss=0.6926, best=0.6926][A
+LSTM:   1%|          | 2/200 [00:07<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM] epoch 3/200 train_loss=0.69034 tr_eval=0.68851 val_loss=0.69259 lr=1.00e-03 tr_auc=0.5575 va_auc=0.5290
 
-LSTM-B:   1%|          | 2/200 [00:10<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][A
-LSTM-B:   2%|▏         | 3/200 [00:10<11:17,  3.44s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM-B] epoch 4/200 train_loss=0.68991 tr_eval=0.68751 val_loss=0.69247 lr=1.00e-03 tr_auc=0.5609 va_auc=0.5273
+LSTM:   1%|          | 2/200 [00:10<11:41,  3.54s/epoch, val_loss=0.6926, best=0.6926][A
+LSTM:   2%|▏         | 3/200 [00:10<11:17,  3.44s/epoch, val_loss=0.6926, best=0.6926][AINFO models.lstm_model: [LSTM] epoch 4/200 train_loss=0.68991 tr_eval=0.68751 val_loss=0.69247 lr=1.00e-03 tr_auc=0.5609 va_auc=0.5273
 
-LSTM-B:   2%|▏         | 3/200 [00:13<11:17,  3.44s/epoch, val_loss=0.6925, best=0.6925][A
-LSTM-B:   2%|▏         | 4/200 [00:13<11:06,  3.40s/epoch, val_loss=0.6925, best=0.6925][AINFO models.lstm_model: [LSTM-B] epoch 5/200 train_loss=0.68862 tr_eval=0.68590 val_loss=0.69237 lr=1.00e-03 tr_auc=0.5682 va_auc=0.5267
+LSTM:   2%|▏         | 3/200 [00:13<11:17,  3.44s/epoch, val_loss=0.6925, best=0.6925][A
+LSTM:   2%|▏         | 4/200 [00:13<11:06,  3.40s/epoch, val_loss=0.6925, best=0.6925][AINFO models.lstm_model: [LSTM] epoch 5/200 train_loss=0.68862 tr_eval=0.68590 val_loss=0.69237 lr=1.00e-03 tr_auc=0.5682 va_auc=0.5267
 
-LSTM-B:   2%|▏         | 4/200 [00:17<11:06,  3.40s/epoch, val_loss=0.6924, best=0.6924][A
-LSTM-B:   2%|▎         | 5/200 [00:17<11:15,  3.46s/epoch, val_loss=0.6924, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 6/200 train_loss=0.68749 tr_eval=0.68395 val_loss=0.69299 lr=1.00e-03 tr_auc=0.5765 va_auc=0.5185
+LSTM:   2%|▏         | 4/200 [00:17<11:06,  3.40s/epoch, val_loss=0.6924, best=0.6924][A
+LSTM:   2%|▎         | 5/200 [00:17<11:15,  3.46s/epoch, val_loss=0.6924, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 6/200 train_loss=0.68749 tr_eval=0.68395 val_loss=0.69299 lr=1.00e-03 tr_auc=0.5765 va_auc=0.5185
 
-LSTM-B:   2%|▎         | 5/200 [00:21<11:15,  3.46s/epoch, val_loss=0.6930, best=0.6924][A
-LSTM-B:   3%|▎         | 6/200 [00:21<11:25,  3.53s/epoch, val_loss=0.6930, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 7/200 train_loss=0.68611 tr_eval=0.68199 val_loss=0.69293 lr=1.00e-03 tr_auc=0.5835 va_auc=0.5210
+LSTM:   2%|▎         | 5/200 [00:21<11:15,  3.46s/epoch, val_loss=0.6930, best=0.6924][A
+LSTM:   3%|▎         | 6/200 [00:21<11:25,  3.53s/epoch, val_loss=0.6930, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 7/200 train_loss=0.68611 tr_eval=0.68199 val_loss=0.69293 lr=1.00e-03 tr_auc=0.5835 va_auc=0.5210
 
-LSTM-B:   3%|▎         | 6/200 [00:24<11:25,  3.53s/epoch, val_loss=0.6929, best=0.6924][A
-LSTM-B:   4%|▎         | 7/200 [00:24<11:15,  3.50s/epoch, val_loss=0.6929, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 8/200 train_loss=0.68471 tr_eval=0.68155 val_loss=0.69313 lr=1.00e-03 tr_auc=0.5876 va_auc=0.5256
+LSTM:   3%|▎         | 6/200 [00:24<11:25,  3.53s/epoch, val_loss=0.6929, best=0.6924][A
+LSTM:   4%|▎         | 7/200 [00:24<11:15,  3.50s/epoch, val_loss=0.6929, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 8/200 train_loss=0.68471 tr_eval=0.68155 val_loss=0.69313 lr=1.00e-03 tr_auc=0.5876 va_auc=0.5256
 
-LSTM-B:   4%|▎         | 7/200 [00:27<11:15,  3.50s/epoch, val_loss=0.6931, best=0.6924][A
-LSTM-B:   4%|▍         | 8/200 [00:27<11:08,  3.48s/epoch, val_loss=0.6931, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 9/200 train_loss=0.68327 tr_eval=0.67933 val_loss=0.69398 lr=1.00e-03 tr_auc=0.5919 va_auc=0.5065
+LSTM:   4%|▎         | 7/200 [00:27<11:15,  3.50s/epoch, val_loss=0.6931, best=0.6924][A
+LSTM:   4%|▍         | 8/200 [00:27<11:08,  3.48s/epoch, val_loss=0.6931, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 9/200 train_loss=0.68327 tr_eval=0.67933 val_loss=0.69398 lr=1.00e-03 tr_auc=0.5919 va_auc=0.5065
 
-LSTM-B:   4%|▍         | 8/200 [00:31<11:08,  3.48s/epoch, val_loss=0.6940, best=0.6924][A
-LSTM-B:   4%|▍         | 9/200 [00:31<11:09,  3.51s/epoch, val_loss=0.6940, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 10/200 train_loss=0.68105 tr_eval=0.67768 val_loss=0.69457 lr=1.00e-03 tr_auc=0.6000 va_auc=0.5153
+LSTM:   4%|▍         | 8/200 [00:31<11:08,  3.48s/epoch, val_loss=0.6940, best=0.6924][A
+LSTM:   4%|▍         | 9/200 [00:31<11:09,  3.51s/epoch, val_loss=0.6940, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 10/200 train_loss=0.68105 tr_eval=0.67768 val_loss=0.69457 lr=1.00e-03 tr_auc=0.6000 va_auc=0.5153
 
-LSTM-B:   4%|▍         | 9/200 [00:34<11:09,  3.51s/epoch, val_loss=0.6946, best=0.6924][A
-LSTM-B:   5%|▌         | 10/200 [00:34<11:08,  3.52s/epoch, val_loss=0.6946, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 11/200 train_loss=0.68003 tr_eval=0.67483 val_loss=0.69441 lr=1.00e-03 tr_auc=0.6061 va_auc=0.5075
+LSTM:   4%|▍         | 9/200 [00:34<11:09,  3.51s/epoch, val_loss=0.6946, best=0.6924][A
+LSTM:   5%|▌         | 10/200 [00:34<11:08,  3.52s/epoch, val_loss=0.6946, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 11/200 train_loss=0.68003 tr_eval=0.67483 val_loss=0.69441 lr=1.00e-03 tr_auc=0.6061 va_auc=0.5075
 
-LSTM-B:   5%|▌         | 10/200 [00:38<11:08,  3.52s/epoch, val_loss=0.6944, best=0.6924][A
-LSTM-B:   6%|▌         | 11/200 [00:38<10:49,  3.44s/epoch, val_loss=0.6944, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 12/200 train_loss=0.67725 tr_eval=0.67140 val_loss=0.69391 lr=1.00e-03 tr_auc=0.6161 va_auc=0.5237
+LSTM:   5%|▌         | 10/200 [00:38<11:08,  3.52s/epoch, val_loss=0.6944, best=0.6924][A
+LSTM:   6%|▌         | 11/200 [00:38<10:49,  3.44s/epoch, val_loss=0.6944, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 12/200 train_loss=0.67725 tr_eval=0.67140 val_loss=0.69391 lr=1.00e-03 tr_auc=0.6161 va_auc=0.5237
 
-LSTM-B:   6%|▌         | 11/200 [00:41<10:49,  3.44s/epoch, val_loss=0.6939, best=0.6924][A
-LSTM-B:   6%|▌         | 12/200 [00:41<10:55,  3.49s/epoch, val_loss=0.6939, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 13/200 train_loss=0.67547 tr_eval=0.66709 val_loss=0.69354 lr=5.00e-04 tr_auc=0.6296 va_auc=0.5188
+LSTM:   6%|▌         | 11/200 [00:41<10:49,  3.44s/epoch, val_loss=0.6939, best=0.6924][A
+LSTM:   6%|▌         | 12/200 [00:41<10:55,  3.49s/epoch, val_loss=0.6939, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 13/200 train_loss=0.67547 tr_eval=0.66709 val_loss=0.69354 lr=5.00e-04 tr_auc=0.6296 va_auc=0.5188
 
-LSTM-B:   6%|▌         | 12/200 [00:45<10:55,  3.49s/epoch, val_loss=0.6935, best=0.6924][A
-LSTM-B:   6%|▋         | 13/200 [00:45<10:55,  3.50s/epoch, val_loss=0.6935, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 14/200 train_loss=0.66899 tr_eval=0.66056 val_loss=0.69475 lr=5.00e-04 tr_auc=0.6428 va_auc=0.5163
+LSTM:   6%|▌         | 12/200 [00:45<10:55,  3.49s/epoch, val_loss=0.6935, best=0.6924][A
+LSTM:   6%|▋         | 13/200 [00:45<10:55,  3.50s/epoch, val_loss=0.6935, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 14/200 train_loss=0.66899 tr_eval=0.66056 val_loss=0.69475 lr=5.00e-04 tr_auc=0.6428 va_auc=0.5163
 
-LSTM-B:   6%|▋         | 13/200 [00:48<10:55,  3.50s/epoch, val_loss=0.6948, best=0.6924][A
-LSTM-B:   7%|▋         | 14/200 [00:48<10:49,  3.49s/epoch, val_loss=0.6948, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 15/200 train_loss=0.66552 tr_eval=0.65795 val_loss=0.69496 lr=5.00e-04 tr_auc=0.6466 va_auc=0.5193
+LSTM:   6%|▋         | 13/200 [00:48<10:55,  3.50s/epoch, val_loss=0.6948, best=0.6924][A
+LSTM:   7%|▋         | 14/200 [00:48<10:49,  3.49s/epoch, val_loss=0.6948, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 15/200 train_loss=0.66552 tr_eval=0.65795 val_loss=0.69496 lr=5.00e-04 tr_auc=0.6466 va_auc=0.5193
 
-LSTM-B:   7%|▋         | 14/200 [00:52<10:49,  3.49s/epoch, val_loss=0.6950, best=0.6924][A
-LSTM-B:   8%|▊         | 15/200 [00:52<10:48,  3.50s/epoch, val_loss=0.6950, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 16/200 train_loss=0.66276 tr_eval=0.65516 val_loss=0.69509 lr=5.00e-04 tr_auc=0.6531 va_auc=0.5186
+LSTM:   7%|▋         | 14/200 [00:52<10:49,  3.49s/epoch, val_loss=0.6950, best=0.6924][A
+LSTM:   8%|▊         | 15/200 [00:52<10:48,  3.50s/epoch, val_loss=0.6950, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 16/200 train_loss=0.66276 tr_eval=0.65516 val_loss=0.69509 lr=5.00e-04 tr_auc=0.6531 va_auc=0.5186
 
-LSTM-B:   8%|▊         | 15/200 [00:55<10:48,  3.50s/epoch, val_loss=0.6951, best=0.6924][A
-LSTM-B:   8%|▊         | 16/200 [00:55<10:30,  3.43s/epoch, val_loss=0.6951, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 17/200 train_loss=0.66090 tr_eval=0.65183 val_loss=0.69633 lr=5.00e-04 tr_auc=0.6592 va_auc=0.5181
+LSTM:   8%|▊         | 15/200 [00:55<10:48,  3.50s/epoch, val_loss=0.6951, best=0.6924][A
+LSTM:   8%|▊         | 16/200 [00:55<10:30,  3.43s/epoch, val_loss=0.6951, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 17/200 train_loss=0.66090 tr_eval=0.65183 val_loss=0.69633 lr=5.00e-04 tr_auc=0.6592 va_auc=0.5181
 
-LSTM-B:   8%|▊         | 16/200 [00:59<10:30,  3.43s/epoch, val_loss=0.6963, best=0.6924][A
-LSTM-B:   8%|▊         | 17/200 [00:59<10:33,  3.46s/epoch, val_loss=0.6963, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 18/200 train_loss=0.65857 tr_eval=0.64950 val_loss=0.69765 lr=5.00e-04 tr_auc=0.6638 va_auc=0.5206
+LSTM:   8%|▊         | 16/200 [00:59<10:30,  3.43s/epoch, val_loss=0.6963, best=0.6924][A
+LSTM:   8%|▊         | 17/200 [00:59<10:33,  3.46s/epoch, val_loss=0.6963, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 18/200 train_loss=0.65857 tr_eval=0.64950 val_loss=0.69765 lr=5.00e-04 tr_auc=0.6638 va_auc=0.5206
 
-LSTM-B:   8%|▊         | 17/200 [01:02<10:33,  3.46s/epoch, val_loss=0.6976, best=0.6924][A
-LSTM-B:   9%|▉         | 18/200 [01:02<10:20,  3.41s/epoch, val_loss=0.6976, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 19/200 train_loss=0.65499 tr_eval=0.64726 val_loss=0.69812 lr=5.00e-04 tr_auc=0.6678 va_auc=0.5157
+LSTM:   8%|▊         | 17/200 [01:02<10:33,  3.46s/epoch, val_loss=0.6976, best=0.6924][A
+LSTM:   9%|▉         | 18/200 [01:02<10:20,  3.41s/epoch, val_loss=0.6976, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 19/200 train_loss=0.65499 tr_eval=0.64726 val_loss=0.69812 lr=5.00e-04 tr_auc=0.6678 va_auc=0.5157
 
-LSTM-B:   9%|▉         | 18/200 [01:05<10:20,  3.41s/epoch, val_loss=0.6981, best=0.6924][A
-LSTM-B:  10%|▉         | 19/200 [01:05<10:20,  3.43s/epoch, val_loss=0.6981, best=0.6924][AINFO models.lstm_model: [LSTM-B] epoch 20/200 train_loss=0.65299 tr_eval=0.64365 val_loss=0.69941 lr=5.00e-04 tr_auc=0.6721 va_auc=0.5153
+LSTM:   9%|▉         | 18/200 [01:05<10:20,  3.41s/epoch, val_loss=0.6981, best=0.6924][A
+LSTM:  10%|▉         | 19/200 [01:05<10:20,  3.43s/epoch, val_loss=0.6981, best=0.6924][AINFO models.lstm_model: [LSTM] epoch 20/200 train_loss=0.65299 tr_eval=0.64365 val_loss=0.69941 lr=5.00e-04 tr_auc=0.6721 va_auc=0.5153
 
-LSTM-B:  10%|▉         | 19/200 [01:08<10:20,  3.43s/epoch, val_loss=0.6924, status=early stop][ALSTM-B:  10%|▉         | 19/200 [01:08<10:56,  3.63s/epoch, val_loss=0.6924, status=early stop]
+LSTM:  10%|▉         | 19/200 [01:08<10:20,  3.43s/epoch, val_loss=0.6924, status=early stop][ALSTM:  10%|▉         | 19/200 [01:08<10:56,  3.63s/epoch, val_loss=0.6924, status=early stop]
 Walk-Forward Folds:   2%|▏         | 1/44 [03:23<2:25:46, 203.41s/fold]INFO pipeline: [fold2 train] class balance 0:14965, 1:15005 (n=29970)
 INFO pipeline: [fold2 val] class balance 0:3750, 1:3750 (n=7500)
 INFO pipeline: [fold2 test] class balance 0:3750, 1:3750 (n=7500)
-  [LSTM-B] stopped: early_stop_patience | best_epoch=5 | best_val_loss=0.6924
-  [LSTM-B] training log: /Users/abdelrahmanelenany/Documents/Study/Bachelor Thesis/stock-prediction/pipeline/../models/../reports/training_logs/fold1_lstm-b.csv
-  [LSTM-B]  fit done in 69.3s
+  [LSTM] stopped: early_stop_patience | best_epoch=5 | best_val_loss=0.6924
+  [LSTM] training log: /Users/abdelrahmanelenany/Documents/Study/Bachelor Thesis/stock-prediction/pipeline/../models/../reports/training_logs/fold1_lstm-b.csv
+  [LSTM]  fit done in 69.3s
   Fold report: reports/fold_reports/fold_001.json
-  Predictions: LR/RF/XGB=7500, LSTM-A=7500, LSTM-B=7500
+  Predictions: LR/RF/XGB=7500, LSTM-A=7500, LSTM=7500
 
 ============================================================
 === Fold 2/44 ===

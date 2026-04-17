@@ -116,7 +116,7 @@ LSTM_FLAT_AUC_EPS = 0.02
 LSTM_OVERFIT_LOSS_RATIO = 3.0
 LSTM_OVERFIT_WARN_epochs = 6
 
-# LSTM-B LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
+# LSTM LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
 LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]
 LSTM_LR_SWEEP_MAX_EPOCHS = 40  # capped budget for experiments/lstm_lr_sweep.py
 
@@ -137,16 +137,16 @@ SECTOR_FEATURES_ENABLED = False
 
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
-    "Return_1d",        # LSTM-A, LSTM-B, Baselines
-    "Return_5d",        # LSTM-B, Baselines (weekly momentum)
-    "Return_21d",       # LSTM-B, Baselines (monthly momentum)
-    "RSI_14",           # LSTM-A, LSTM-B, Baselines
+    "Return_1d",        # LSTM-A, LSTM, Baselines
+    "Return_5d",        # LSTM, Baselines (weekly momentum)
+    "Return_21d",       # LSTM, Baselines (monthly momentum)
+    "RSI_14",           # LSTM-A, LSTM, Baselines
     "MACD",             # LSTM-A only
     "ATR_14",           # LSTM-A only
-    "BB_PctB",          # LSTM-B, Baselines
-    "RealVol_20d",      # LSTM-B, Baselines
-    "Volume_Ratio",     # LSTM-B, Baselines
-    "SectorRelReturn",  # LSTM-B, Baselines
+    "BB_PctB",          # LSTM, Baselines
+    "RealVol_20d",      # LSTM, Baselines
+    "Volume_Ratio",     # LSTM, Baselines
+    "SectorRelReturn",  # LSTM, Baselines
 ]
 
 if MARKET_FEATURES_ENABLED:
@@ -218,7 +218,7 @@ if SECTOR_FEATURES_ENABLED:
         "SectorRelZ_Return_1d",
     ])
 
-# Baselines use LSTM-B features for fair comparison
+# Baselines use LSTM features for fair comparison
 BASELINE_FEATURE_COLS = LSTM_B_FEATURE_COLS
 
 # Trading
@@ -252,10 +252,10 @@ LSTM_A_ARCH_GRID = {
     "dropout":     [0.1, 0.2],
 }
 
-# ── LSTM-B: Extended ablation — curated 6-feature set (fixed architecture) ────
+# ── LSTM: Extended ablation — curated 6-feature set (fixed architecture) ────
 LSTM_B_FEATURES      = LSTM_B_FEATURE_COLS
 LSTM_B_SEQ_LEN       = SEQ_LEN
-LSTM_B_HIDDEN_SIZE   = 32                     # fixed architecture for LSTM-B
+LSTM_B_HIDDEN_SIZE   = 32                     # fixed architecture for LSTM
 LSTM_B_NUM_LAYERS    = 1
 LSTM_B_DROPOUT       = 0.0
 LSTM_B_HIDDEN        = LSTM_B_HIDDEN_SIZE     # alias for backward compatibility
@@ -273,7 +273,7 @@ LSTM_B_VAL_SPLIT     = 0.2
 LSTM_WD              = 1e-5                   # weight decay (both models)
 
 # ── LSTM Hyperparameter Search Grid (Bhandari §3.3) ──────────────────────────
-# Shared by both LSTM-A and LSTM-B for the training hyperparameter search
+# Shared by both LSTM-A and LSTM for the training hyperparameter search
 LSTM_HYPERPARAM_GRID = {
     "optimizer":      ["adam", "adagrad", "nadam"],   # paper tests these three
     "learning_rate":  [0.1, 0.01, 0.001],             # paper tests these three
@@ -283,7 +283,7 @@ LSTM_TUNE_REPLICATES = 3      # paper uses 10; 3 is feasible on M4 for a thesis
 LSTM_TUNE_PATIENCE   = 5      # early stopping patience during tuning (paper §3.3)
 LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
 
-# LSTM-B focused tuning controls (bounded search to keep wall-time manageable)
+# LSTM focused tuning controls (bounded search to keep wall-time manageable)
 LSTM_B_ENABLE_TUNING = True
 LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True
 LSTM_B_HYPERPARAM_GRID = {
@@ -342,11 +342,11 @@ RANDOM_SEED = 42
 # DEV MODE — Set False for final thesis run only
 # =============================================================================
 DEV_MODE = True  # When True, skips LSTM-A to reduce runtime
-MODELS_DEV  = ['LR', 'RF', 'XGBoost', 'LSTM-B']
-MODELS_FULL = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
+MODELS_DEV  = ['LR', 'RF', 'XGBoost', 'LSTM']
+MODELS_FULL = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM']
 
 # ── Model registry (after refactor) ──────────────────────────────────────────
-MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM-B']
+MODELS = ['LR', 'RF', 'XGBoost', 'LSTM-A', 'LSTM']
 
 ```
 
@@ -1501,7 +1501,7 @@ models/lstm_model.py:640:    scaler.fit(df_true_train[feature_cols].values)
 """
 models/lstm_model.py
 LSTM-A: Bhandari-inspired technical indicator LSTM (4 features, tuned architecture)
-LSTM-B: Extended ablation — 6 curated features, fixed architecture (64 units, 2 layers)
+LSTM: Extended ablation — 6 curated features, fixed architecture (64 units, 2 layers)
 
 Both models output raw logits (2 classes) — use CrossEntropyLoss in training.
 Inference applies softmax to get class probabilities.
@@ -1670,7 +1670,7 @@ def tune_lstm_hyperparams(
              the training hyperparameters.
 
     LSTM-A calls this function with arch_grid=config.LSTM_A_ARCH_GRID.
-    LSTM-B calls this function with arch_grid=None (architecture stays fixed).
+    LSTM calls this function with arch_grid=None (architecture stays fixed).
 
     Parameters
     ----------
@@ -1983,7 +1983,7 @@ def prepare_lstm_a_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
 
 def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
     """
-    Builds overlapping multi-feature sequences for LSTM-B.
+    Builds overlapping multi-feature sequences for LSTM.
     Scaler is fit on training fold only and applied to both splits.
 
     For test sequences, training data is used as lookback history so that
@@ -2105,7 +2105,7 @@ def prepare_lstm_a_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.
 def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
                                              val_ratio: float = 0.2):
     """
-    Build LSTM-B sequences with TEMPORAL train/val split.
+    Build LSTM sequences with TEMPORAL train/val split.
 
     FIX: Instead of splitting by index (which splits by ticker), this function
     splits by DATE - the last val_ratio of training DATES become validation.
@@ -2186,15 +2186,15 @@ class StockLSTMTunable(nn.Module):
     """
     Flexible LSTM architecture for hyperparameter tuning.
     All architecture parameters are configurable via constructor.
-    Used for both LSTM-A (tuned) and LSTM-B (fixed architecture).
+    Used for both LSTM-A (tuned) and LSTM (fixed architecture).
     Outputs logits for 2 classes.
     """
     def __init__(
         self,
-        input_size: int,        # 4 for LSTM-A, 6 for LSTM-B
-        hidden_size: int = 64,  # tuner-resolved for LSTM-A; fixed 64 for LSTM-B
-        num_layers: int = 2,    # tuner-resolved for LSTM-A; fixed 2 for LSTM-B
-        dropout: float = 0.2,   # tuner-resolved for LSTM-A; fixed 0.2 for LSTM-B
+        input_size: int,        # 4 for LSTM-A, 6 for LSTM
+        hidden_size: int = 64,  # tuner-resolved for LSTM-A; fixed 64 for LSTM
+        num_layers: int = 2,    # tuner-resolved for LSTM-A; fixed 2 for LSTM
+        dropout: float = 0.2,   # tuner-resolved for LSTM-A; fixed 0.2 for LSTM
     ):
         super().__init__()
         self.lstm = nn.LSTM(
@@ -2649,7 +2649,7 @@ def _train_lstm_b_impl(
         criterion,
         max_epochs,
         patience,
-        "LSTM-B",
+        "LSTM",
         batch_size=batch_size,
         seed=seed,
         lr_scheduler=scheduler,
@@ -2673,7 +2673,7 @@ def train_lstm_b(
     dropout: float | None = None,
 ):
     """
-    Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
+    Trains LSTM using Adam with ReduceLROnPlateau scheduler.
     Returns trained model with best validation loss weights restored.
     Falls back to CPU if MPS runs out of memory.
     """
@@ -2711,7 +2711,7 @@ def train_lstm_b(
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
-            print(f"  [LSTM-B] MPS out of memory, falling back to CPU...")
+            print(f"  [LSTM] MPS out of memory, falling back to CPU...")
             _clear_mps_cache()
             cpu_device = torch.device('cpu')
             model, optimizer, scheduler, criterion = _create_model_and_optim(cpu_device)
@@ -3001,7 +3001,7 @@ models/lstm_model.py:1135:    patience,
 models/lstm_model.py:1140:    """Delegates to _train_lstm_impl with ReduceLROnPlateau."""
 models/lstm_model.py:1141:    return _train_lstm_impl(
 models/lstm_model.py:1151:        patience,
-models/lstm_model.py:1176:    Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
+models/lstm_model.py:1176:    Trains LSTM using Adam with ReduceLROnPlateau scheduler.
 models/lstm_model.py:1192:        optimizer = _build_optimizer(model, opt_name, lr_use)
 models/lstm_model.py:1193:        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
 models/lstm_model.py:1195:            patience=config.LSTM_B_LR_PATIENCE,
@@ -3792,18 +3792,18 @@ def compute_tc_sensitivity(
 ```python
 """
 main.py — Full pipeline orchestrator
-Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-A, LSTM-B.
+Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-A, LSTM.
 
 Models after refactor:
   - LR:      Logistic Regression (baseline) — 6 features
   - RF:      Random Forest (baseline) — 6 features
   - XGBoost: XGBoost (baseline) — 6 features
   - LSTM-A:  Bhandari-inspired (4 technical features, tuned architecture)
-  - LSTM-B:  Extended ablation (6 features, fixed architecture)
+  - LSTM:  Extended ablation (6 features, fixed architecture)
 
 Implements Bhandari et al. (2022) extensions:
   - Dual scalers: separate feature normalization for LSTM-A (4 features) and
-    LSTM-B/baselines (6 features)
+    LSTM/baselines (6 features)
   - Optional LSTM hyperparameter tuning (Phase 1 + Phase 2 for LSTM-A)
   - Configurable scaler type (standard/minmax)
 
@@ -3882,7 +3882,7 @@ CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 ENABLE_LSTM_A_TUNING = False  # Keep False in dev unless explicitly needed.
 
 RUN_BASELINES = True        # Set False to skip LR, RF, XGB
-RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM-B
+RUN_LSTMS = True            # Set False to skip LSTM-A, LSTM
 
 device = (
     torch.device('cuda') if torch.cuda.is_available()
@@ -3929,7 +3929,7 @@ def save_all_results(
             'subperiod': DataFrame of sub-period metrics,
         }
         daily_returns_dict: {
-            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM-A, LSTM-B],
+            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM-A, LSTM],
             'net_5':  pd.DataFrame same columns,
         }
         signals_dict: pd.DataFrame with all signals
@@ -4056,7 +4056,7 @@ def run_walk_forward_pipeline(
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
     print(f"LSTM-A Dev Mode: {'ENABLED' if lstm_a_dev_mode else 'DISABLED'}")
     print(f"LSTM-A Tuning: {'ENABLED' if lstm_a_tuning_enabled else 'DISABLED'}")
-    print(f"LSTM-B Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
+    print(f"LSTM Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
     print(f"Configured tickers: {len(config.TICKERS)}")
     print("=" * 60)
@@ -4105,14 +4105,14 @@ def run_walk_forward_pipeline(
     if lstm_a_missing:
         raise ValueError(f'Missing LSTM-A features: {lstm_a_missing}')
 
-    # Verify LSTM-B features are available (6 features)
+    # Verify LSTM features are available (6 features)
     lstm_b_missing = [c for c in LSTM_B_FEATURES if c not in data.columns]
     if lstm_b_missing:
-        raise ValueError(f'Missing LSTM-B features: {lstm_b_missing}')
+        raise ValueError(f'Missing LSTM features: {lstm_b_missing}')
 
     print(f'\nFeature sets:')
     print(f'  LSTM-A: {LSTM_A_FEATURES} ({len(LSTM_A_FEATURES)} features)')
-    print(f'  LSTM-B: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
+    print(f'  LSTM: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
     print(f'  Baselines (LR/RF/XGB): {BASELINE_FEATURE_COLS} ({len(BASELINE_FEATURE_COLS)} features)')
 
     # Step 4: Walk-forward folds
@@ -4368,7 +4368,7 @@ def run_walk_forward_pipeline(
                 # LSTM-A inference
                 probs_a = predict_lstm(model_a, X_te_a, device)
 
-                # Free LSTM-A memory before training LSTM-B
+                # Free LSTM-A memory before training LSTM
                 del model_a, X_tr_a, y_tr_a, X_val_a, y_val_a, X_te_a, y_te_a
                 if torch.backends.mps.is_available():
                     torch.mps.empty_cache()
@@ -4376,22 +4376,22 @@ def run_walk_forward_pipeline(
                 print('  [LSTM-A]  skipped (DEV_MODE=True)')
                 probs_a = None
 
-            # ── LSTM-B: Extended feature LSTM with optional tuning ───────────────
+            # ── LSTM: Extended feature LSTM with optional tuning ───────────────
             t0 = time.time()
-            print('  [LSTM-B]  building sequences & training...')
+            print('  [LSTM]  building sequences & training...')
 
             # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
             X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, keys_tr_b, keys_val_b, keys_te_b = \
                 prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_B_VAL_SPLIT)
 
-            print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
+            print(f'    LSTM sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
 
             best_hp_b = None
             should_tune_b = lstm_b_tuning_enabled and (
                 (best_hp_b_global is None) or (not lstm_b_tune_once)
             )
             if should_tune_b:
-                print('    [LSTM-B Tuning] Running Phase 1 + Phase 2...')
+                print('    [LSTM Tuning] Running Phase 1 + Phase 2...')
                 tuned_hp_b = tune_lstm_hyperparams(
                     X_tr_b, y_tr_b,
                     X_val_b, y_val_b,
@@ -4465,25 +4465,25 @@ def run_walk_forward_pipeline(
                 best_hp_b = selected['hp']
 
                 print(
-                    '    [LSTM-B Tuning] Candidate scores: '
+                    '    [LSTM Tuning] Candidate scores: '
                     + ', '.join(
                         f"{c['name']}(Sharpe={c['val_sharpe_net']:.3f},AnnRet={c['val_ann_ret_net_pct']:.2f}%)"
                         for c in candidate_scores
                     )
                 )
                 if selected['name'] == 'default':
-                    print('    [LSTM-B Tuning] Tuned candidate underperformed on val returns; using default.')
+                    print('    [LSTM Tuning] Tuned candidate underperformed on val returns; using default.')
 
                 tuning_results.append({
                     'fold': fold['fold'],
-                    'model': 'LSTM-B',
+                    'model': 'LSTM',
                     'selection_basis': 'val_net_sharpe_then_annret',
                     'selected_candidate': selected['name'],
                     'val_sharpe_selected': selected['val_sharpe_net'],
                     'val_ann_ret_selected': selected['val_ann_ret_net_pct'],
                     **(tuned_hp_b if tuned_hp_b is not None else {}),
                 })
-                print(f'    [LSTM-B Tuning] Selected params: {best_hp_b}')
+                print(f'    [LSTM Tuning] Selected params: {best_hp_b}')
                 if lstm_b_tune_once:
                     best_hp_b_global = best_hp_b if best_hp_b is not None else 'DEFAULT'
             elif best_hp_b_global is not None:
@@ -4491,7 +4491,7 @@ def run_walk_forward_pipeline(
                     best_hp_b = None
                 else:
                     best_hp_b = best_hp_b_global
-                print(f'    [LSTM-B Tuning] Reusing tuned params: {best_hp_b}')
+                print(f'    [LSTM Tuning] Reusing tuned params: {best_hp_b}')
 
             if best_hp_b is not None:
                 model_b = train_lstm_b(
@@ -4515,17 +4515,17 @@ def run_walk_forward_pipeline(
                     seed=fold_seed_base + 30,
                     fold_idx=fold['fold'],
                 )
-            print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
+            print(f'  [LSTM]  fit done in {time.time()-t0:.1f}s')
 
-            # LSTM-B inference
+            # LSTM inference
             probs_b = predict_lstm(model_b, X_te_b, device)
 
-            # Free LSTM-B memory for next fold
+            # Free LSTM memory for next fold
             del model_b, X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
         else:
-            print('\n  [LSTMs]     Skipping LSTM-A and LSTM-B (RUN_LSTMS=False)')
+            print('\n  [LSTMs]     Skipping LSTM-A and LSTM (RUN_LSTMS=False)')
 
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
@@ -4561,7 +4561,7 @@ def run_walk_forward_pipeline(
         n_lstm_a = pred['Prob_LSTM_A'].notna().sum()
         n_lstm_b = pred['Prob_LSTM_B'].notna().sum()
         print(f'  Predictions: LR/RF/XGB={len(pred)}, '
-              f'LSTM-A={n_lstm_a}, LSTM-B={n_lstm_b}')
+              f'LSTM-A={n_lstm_a}, LSTM={n_lstm_b}')
 
         all_preds.append(pred)
 
@@ -4569,7 +4569,7 @@ def run_walk_forward_pipeline(
     full_preds = pd.concat(all_preds).reset_index(drop=True)
     print(f'\nTotal predictions: {len(full_preds)}')
     print(f'  LSTM-A valid: {full_preds["Prob_LSTM_A"].notna().sum()}')
-    print(f'  LSTM-B valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
+    print(f'  LSTM valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
 
     # ── Backtest each model independently ─────────────────────────────────────
     print('\n' + '=' * 60)
@@ -4580,7 +4580,7 @@ def run_walk_forward_pipeline(
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
-        'LSTM-B': 'Prob_LSTM_B',
+        'LSTM': 'Prob_LSTM_B',
     }
     if not DEV_MODE:
         model_cols['LSTM-A'] = 'Prob_LSTM_A'
@@ -4823,7 +4823,7 @@ GROSS RETURNS (0 bps TC)
   LR            Sharpe=-0.530  Sortino=-0.722  Ann.Ret= -2.92%  MDD=-27.92%
   RF            Sharpe=-0.246  Sortino=-0.354  Ann.Ret=  1.01%  MDD=-24.19%
   XGBoost       Sharpe=-0.199  Sortino=-0.288  Ann.Ret=  1.65%  MDD=-21.38%
-  LSTM-B        Sharpe=-0.095  Sortino=-0.133  Ann.Ret=  2.48%  MDD=-34.03%
+  LSTM        Sharpe=-0.095  Sortino=-0.133  Ann.Ret=  2.48%  MDD=-34.03%
   Ensemble      Sharpe=-0.781  Sortino=-1.142  Ann.Ret= -5.62%  MDD=-38.03%
 
 ────────────────────────────────────────────────────────────
@@ -4832,7 +4832,7 @@ NET RETURNS  (5 bps TC)
   LR            Sharpe=-0.968  Sortino=-1.321  Ann.Ret= -8.19%  MDD=-40.02%
   RF            Sharpe=-0.814  Sortino=-1.170  Ann.Ret= -5.24%  MDD=-36.42%
   XGBoost       Sharpe=-0.801  Sortino=-1.153  Ann.Ret= -4.72%  MDD=-33.11%
-  LSTM-B        Sharpe=-0.351  Sortino=-0.493  Ann.Ret= -1.14%  MDD=-37.60%
+  LSTM        Sharpe=-0.351  Sortino=-0.493  Ann.Ret= -1.14%  MDD=-37.60%
   Ensemble      Sharpe=-1.245  Sortino=-1.813  Ann.Ret=-10.85%  MDD=-48.81%
 
 ============================================================
@@ -4841,7 +4841,7 @@ CLASSIFICATION METRICS
   LR            Acc=49.91%  AUC=0.4972  F1=0.5041
   RF            Acc=50.10%  AUC=0.5019  F1=0.4970
   XGBoost       Acc=50.13%  AUC=0.5012  F1=0.4972
-  LSTM-B        Acc=50.17%  AUC=0.5004  F1=0.5240
+  LSTM        Acc=50.17%  AUC=0.5004  F1=0.5240
   Ensemble      Acc=50.22%  AUC=0.5008  F1=0.5117
 ```
 
@@ -4858,7 +4858,7 @@ GROSS RETURNS (0 bps TC)
   LR            Sharpe= 0.317  Sortino= 0.405  Ann.Ret= 21.99%  MDD=-70.45%
   RF            Sharpe=-0.700  Sortino=-0.917  Ann.Ret=-19.25%  MDD=-78.77%
   XGBoost       Sharpe= 0.158  Sortino= 0.200  Ann.Ret=  9.91%  MDD=-60.77%
-  LSTM-B        Sharpe=-0.373  Sortino=-0.451  Ann.Ret=-12.63%  MDD=-87.58%
+  LSTM        Sharpe=-0.373  Sortino=-0.451  Ann.Ret=-12.63%  MDD=-87.58%
 
 ────────────────────────────────────────────────────────────
 NET RETURNS  (5 bps TC)
@@ -4866,7 +4866,7 @@ NET RETURNS  (5 bps TC)
   LR            Sharpe= 0.205  Sortino= 0.263  Ann.Ret= 15.27%  MDD=-75.18%
   RF            Sharpe=-0.902  Sortino=-1.182  Ann.Ret=-24.91%  MDD=-84.36%
   XGBoost       Sharpe=-0.050  Sortino=-0.063  Ann.Ret=  2.02%  MDD=-67.72%
-  LSTM-B        Sharpe=-0.472  Sortino=-0.571  Ann.Ret=-16.53%  MDD=-89.13%
+  LSTM        Sharpe=-0.472  Sortino=-0.571  Ann.Ret=-16.53%  MDD=-89.13%
 
 ============================================================
 CLASSIFICATION METRICS
@@ -4874,7 +4874,7 @@ CLASSIFICATION METRICS
   LR            Acc=50.48%  AUC=0.5028  F1=0.5729
   RF            Acc=50.94%  AUC=0.5112  F1=0.5367
   XGBoost       Acc=51.10%  AUC=0.5097  F1=0.5498
-  LSTM-B        Acc=51.00%  AUC=0.5149  F1=0.5373
+  LSTM        Acc=51.00%  AUC=0.5149  F1=0.5373
 ```
 
 ### reports/large_cap_backtest_summary.txt (verbatim)
@@ -4890,7 +4890,7 @@ GROSS RETURNS (0 bps TC)
   LR            Sharpe=-0.828  Sortino=-1.124  Ann.Ret=-13.58%  MDD=-72.38%
   RF            Sharpe=-1.124  Sortino=-1.523  Ann.Ret=-16.76%  MDD=-65.93%
   XGBoost       Sharpe=-0.773  Sortino=-1.091  Ann.Ret= -9.25%  MDD=-53.73%
-  LSTM-B        Sharpe= 0.035  Sortino= 0.054  Ann.Ret=  4.72%  MDD=-54.38%
+  LSTM        Sharpe= 0.035  Sortino= 0.054  Ann.Ret=  4.72%  MDD=-54.38%
 
 ────────────────────────────────────────────────────────────
 NET RETURNS  (5 bps TC)
@@ -4898,7 +4898,7 @@ NET RETURNS  (5 bps TC)
   LR            Sharpe=-1.132  Sortino=-1.537  Ann.Ret=-19.21%  MDD=-77.90%
   RF            Sharpe=-1.507  Sortino=-2.043  Ann.Ret=-22.81%  MDD=-72.83%
   XGBoost       Sharpe=-1.227  Sortino=-1.728  Ann.Ret=-16.16%  MDD=-63.84%
-  LSTM-B        Sharpe=-0.157  Sortino=-0.238  Ann.Ret=  0.09%  MDD=-56.51%
+  LSTM        Sharpe=-0.157  Sortino=-0.238  Ann.Ret=  0.09%  MDD=-56.51%
 
 ============================================================
 CLASSIFICATION METRICS
@@ -4906,7 +4906,7 @@ CLASSIFICATION METRICS
   LR            Acc=49.56%  AUC=0.4938  F1=0.5060
   RF            Acc=48.94%  AUC=0.4878  F1=0.4816
   XGBoost       Acc=49.19%  AUC=0.4912  F1=0.4848
-  LSTM-B        Acc=49.67%  AUC=0.4982  F1=0.5312
+  LSTM        Acc=49.67%  AUC=0.4982  F1=0.5312
 ```
 
 ### Fold-by-fold AUC found in reports/fold_reports/*.json
@@ -5147,8 +5147,8 @@ Severity: [HIGH]
 ```text
 File: main.py
 Location: model_cols and post-fold backtest block
-CLAUDE.md says: Backtests LR, RF, XGBoost, LSTM-A, LSTM-B, and Ensemble.
-Code does: No Ensemble backtest block present; model_cols includes LR, RF, XGBoost, LSTM-B and LSTM-A only when DEV_MODE=False.
+CLAUDE.md says: Backtests LR, RF, XGBoost, LSTM-A, LSTM, and Ensemble.
+Code does: No Ensemble backtest block present; model_cols includes LR, RF, XGBoost, LSTM and LSTM-A only when DEV_MODE=False.
 Severity: [HIGH]
 ```
 
@@ -5172,7 +5172,7 @@ Severity: [MEDIUM]
 File: models/lstm_model.py
 Location: prepare_lstm_a_sequences_temporal_split / prepare_lstm_b_sequences_temporal_split
 CLAUDE.md says: Scaling policy is config-driven (SCALER_TYPE) via pipeline standardizer.
-Code does: Hardcodes StandardScaler() inside sequence prep for LSTM-A/LSTM-B.
+Code does: Hardcodes StandardScaler() inside sequence prep for LSTM-A/LSTM.
 Severity: [MEDIUM]
 ```
 

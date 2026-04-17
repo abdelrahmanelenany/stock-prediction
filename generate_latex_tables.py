@@ -65,7 +65,7 @@ print("=== Table T5 ===")
 net_raw   = pd.read_csv(os.path.join(REPORTS, "large_cap_table_T5_net_returns_5bps.csv"))
 gross_raw = pd.read_csv(os.path.join(REPORTS, "large_cap_table_T5_gross_returns.csv"))
 
-MODELS_ORDER = ["LR", "RF", "XGBoost", "LSTM-B", "Ensemble"]
+MODELS_ORDER = ["LR", "RF", "XGBoost", "LSTM", "Ensemble"]
 
 # Ensure model column exists
 for df in [net_raw, gross_raw]:

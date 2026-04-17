@@ -8,7 +8,7 @@
 ## Project Summary
 
 Build a **walk-forward validated, backtested long-short trading strategy** using ML models
-(Logistic Regression, Random Forest, XGBoost, LSTM-B, Ensemble) on a configurable stock universe
+(Logistic Regression, Random Forest, XGBoost, LSTM, Ensemble) on a configurable stock universe
 over **2019–2024**. The pipeline predicts each stock's probability of outperforming
 the cross-sectional median N-day forward return, ranks stocks by that probability, and constructs
 an equal-weighted long-short portfolio. Features include technical indicators plus optional
@@ -51,7 +51,7 @@ stock_prediction/
 │   └── diagnostics.py               # Dataset diagnostics utilities
 ├── models/
 │   ├── baselines.py                  # LR, RF, XGBoost (with grid search + feature importances)
-│   ├── lstm_model.py                 # LSTM-B architecture + Bhandari-style tuning
+│   ├── lstm_model.py                 # LSTM architecture + Bhandari-style tuning
 │   └── calibration.py               # Probability calibration (isotonic/Platt)
 ├── backtest/
 │   ├── signals.py                    # Rank → Long/Short/Hold signals (smoothing, z-scoring, holding)
@@ -60,7 +60,7 @@ stock_prediction/
 ├── evaluation/
 │   └── metrics_utils.py              # binary_auc_safe, classification_sanity_checks, log_split_balance
 ├── experiments/
-│   ├── lstm_lr_sweep.py              # LSTM-B learning rate grid sweep
+│   ├── lstm_lr_sweep.py              # LSTM learning rate grid sweep
 │   └── train_window_sweep.py         # Train-window length comparison (~1y / ~3y / ~5y)
 ├── analysis/
 │   └── feature_correlation.py        # Feature correlation analysis and selection
@@ -72,7 +72,7 @@ stock_prediction/
 │   ├── large_cap_table_T8_*.csv      # Classification metrics (large-cap)
 │   ├── large_cap_feature_importances_*.csv  # Per-fold + averaged feature importances
 │   ├── large_cap_fold_sharpe_per_model.csv  # Fold-level Sharpe diagnostics
-│   ├── large_cap_lstm_tuning_results.csv    # LSTM-B hyperparameter tuning results
+│   ├── large_cap_lstm_tuning_results.csv    # LSTM hyperparameter tuning results
 │   ├── large_cap_full_predictions.csv       # Raw per-fold model probabilities
 │   ├── large_cap_daily_returns_*.csv        # Daily return series
 │   ├── large_cap_signals_all_models.csv     # All model signals
@@ -110,8 +110,7 @@ Device priority: CUDA → MPS → CPU. The pipeline auto-detects in `main.py`.
 
 ### Universe Configuration
 
-The active universe is controlled by `UNIVERSE_MODE` ("large_cap" | "small_cap") and
-`USE_FULL_500_STOCK_UNIVERSE` (False = 50-stock curated | True = all ~500 S&P 500 stocks).
+The active universe is controlled by `UNIVERSE_MODE` ("large_cap" | "small_cap").
 
 A `UniverseConfig` dataclass captures all universe-specific settings:
 - `tickers`, `baseline_feature_cols`, `lstm_b_feature_cols`
@@ -161,11 +160,11 @@ A `UniverseConfig` dataclass captures all universe-specific settings:
 - Market context (if `MARKET_FEATURES_ENABLED=True`): `Market_Return_1d/5d/21d`, `Market_Vol_20d/60d`, `RelToMarket_1d/5d/21d`, `Beta_60d`
 - Sector context (if `SECTOR_FEATURES_ENABLED=True`): `Sector_Return_1d/5d/21d`, `Sector_Vol_20d/60d`, `SectorRelZ_Return_1d`
 
-**LSTM-B features** (`LSTM_B_FEATURE_COLS`): `Return_1d`, `Return_5d`, `Return_21d`, `RSI_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn` + market/sector context features (if enabled).
+**LSTM features** (`LSTM_B_FEATURE_COLS`): `Return_1d`, `Return_5d`, `Return_21d`, `RSI_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn` + market/sector context features (if enabled).
 
 **Baseline features** (`BASELINE_FEATURE_COLS`): Same as `LSTM_B_FEATURE_COLS` for fair comparison.
 
-### LSTM-B Architecture (Fixed)
+### LSTM Architecture (Fixed)
 
 | Parameter | Value |
 |---|---|
@@ -321,7 +320,7 @@ Pipeline per fold:
 1. **Winsorize** (if `WINSORIZE_ENABLED`): clip features at 0.5th/99.5th percentile — fit on train rows, applied to all splits.
 2. **Standardize**: StandardScaler fit on training data, transform val/test.
 
-Separate scalers are fit for baseline features vs LSTM-B features (different feature sets).
+Separate scalers are fit for baseline features vs LSTM features (different feature sets).
 
 ---
 
@@ -333,11 +332,11 @@ Separate scalers are fit for baseline features vs LSTM-B features (different fea
 
 | Model | Features | Architecture | Notes |
 |---|---|---|---|
-| LR | LSTM-B features | Logistic Regression | L2 regularization, TimeSeriesSplit CV |
-| RF | LSTM-B features | Random Forest | Val-based hyperparameter selection |
-| XGBoost | LSTM-B features | Gradient Boosting | Early stopping on val AUC |
-| LSTM-B | LSTM-B features | 32h, 1L, 0.0d (fixed) | Optional Bhandari-style tuning |
-| Ensemble | LR + LSTM-B | Mean probability | RF and XGBoost excluded (negative Sharpe) |
+| LR | LSTM features | Logistic Regression | L2 regularization, TimeSeriesSplit CV |
+| RF | LSTM features | Random Forest | Val-based hyperparameter selection |
+| XGBoost | LSTM features | Gradient Boosting | Early stopping on val AUC |
+| LSTM | LSTM features | 32h, 1L, 0.0d (fixed) | Optional Bhandari-style tuning |
+| Ensemble | LR + LSTM | Mean probability | RF and XGBoost excluded (negative Sharpe) |
 
 ### 6a. Logistic Regression
 
@@ -357,7 +356,7 @@ Grid: `max_depth` [3,4,5], `eta` [0.01], `subsample` [0.6,0.7].
 L1 regularization (alpha=0.1), L2 (lambda=1.0), colsample_bytree=0.5.
 Outputs `XGB_gain` (average gain, normalised) for feature importance.
 
-### 6d. LSTM-B
+### 6d. LSTM
 
 Fixed architecture: 32 hidden, 1 layer, no dropout, batch=256, seq_len=30.
 Temporal split (by date, not ticker) to prevent temporal leakage.
@@ -365,18 +364,18 @@ Optional Bhandari §3.3-style two-phase tuning (Phase 1: optimizer/lr/batch; Pha
 - Tuning is only run on fold 1 (`LSTM_B_TUNE_ON_FIRST_FOLD_ONLY=True`), then reused.
 - Selection criterion: best validation **net Sharpe** (trading metric), not AUC.
 - Return-aware guardrail: default is kept if tuned candidate underperforms on val returns.
-Per-fold permutation importance computed for LSTM-B (feature drop in AUC after shuffling).
+Per-fold permutation importance computed for LSTM (feature drop in AUC after shuffling).
 Gradient clipping at `LSTM_MAX_GRAD_NORM=1.0`.
 
 ### 6e. Ensemble
 
-Mean probability of **LR + LSTM-B only** (RF and XGBoost excluded due to negative Sharpe
+Mean probability of **LR + LSTM only** (RF and XGBoost excluded due to negative Sharpe
 in large-cap universe). Controlled by `include_lstm_b_in_ensemble` in `UniverseConfig`.
 
 ### 6f. Feature Importance (all models)
 
 `extract_feature_importances()` in `models/baselines.py` extracts per-fold importance from
-all three baseline models. LSTM-B uses permutation importance (AUC drop after feature shuffle).
+all three baseline models. LSTM uses permutation importance (AUC drop after feature shuffle).
 Saved to `reports/{universe}_feature_importances_per_fold.csv` and `..._avg.csv`.
 
 ---
@@ -458,7 +457,7 @@ Entry points:
 
 **Pipeline flags:**
 - `RUN_BASELINES` (True): enable/disable LR, RF, XGBoost.
-- `RUN_LSTMS` (True): enable/disable LSTM-B.
+- `RUN_LSTMS` (True): enable/disable LSTM.
 - All results prefixed by `config.UNIVERSE_MODE` in reports dir.
 
 **Key implementation highlights:**
@@ -468,10 +467,10 @@ Entry points:
 4. **Cache horizon check**: detects `TARGET_HORIZON_DAYS` mismatch and auto-recomputes.
 5. **Causal wavelet denoising** (when enabled): thresholds from train only, applied per-split.
 6. **Winsorization + standardisation**: per fold, fit on train only.
-7. **LSTM-B tuning**: optional, first-fold only, return-aware selection.
-8. **LSTM-B permutation importance**: computed per fold on test set.
+7. **LSTM tuning**: optional, first-fold only, return-aware selection.
+8. **LSTM permutation importance**: computed per fold on test set.
 9. **Signal pipeline**: smoothing → z-score → threshold → holding constraint.
-10. **Ensemble**: LR + LSTM-B only (RF/XGBoost excluded empirically).
+10. **Ensemble**: LR + LSTM only (RF/XGBoost excluded empirically).
 11. **Per-fold fold reports** saved when `SAVE_FOLD_REPORTS=True`.
 12. **Full predictions CSV** saved for downstream stitching (`combine_and_backtest.py`).
 
@@ -535,12 +534,12 @@ Entry points:
 |---|---|---|
 | `{universe}_backtest_summary.txt` | Human-readable performance summary | ✅ |
 | `{universe}_signals_all_models.csv` | All model signals for analysis | ✅ |
-| `{universe}_lstm_tuning_results.csv` | LSTM-B hyperparameter tuning results | ✅ |
+| `{universe}_lstm_tuning_results.csv` | LSTM hyperparameter tuning results | ✅ |
 | `{universe}_feature_importances_*.csv` | Per-fold and averaged feature importances | ✅ |
 | `{universe}_full_predictions.csv` | Raw per-fold model probabilities | ✅ |
 | `{universe}_fold_sharpe_per_model.csv` | Fold-level Sharpe diagnostics | ✅ |
 | `fold_reports/fold_N.json` | Per-fold diagnostic artifacts | ✅ |
-| `training_logs/` | LSTM-B epoch-level training CSVs | ✅ |
+| `training_logs/` | LSTM epoch-level training CSVs | ✅ |
 
 ---
 
@@ -566,7 +565,7 @@ Results saved to `reports/train_window_comparison.csv`.
 
 ### `experiments/lstm_lr_sweep.py`
 
-LSTM-B learning rate grid sweep: `LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]`.
+LSTM learning rate grid sweep: `LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]`.
 Capped at `LSTM_LR_SWEEP_MAX_EPOCHS = 40` for budget control.
 
 ### `combine_and_backtest.py`
@@ -579,7 +578,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 
 ## Hyperparameter Reference
 
-### LSTM-B (Fixed architecture, optional tuning)
+### LSTM (Fixed architecture, optional tuning)
 
 | Parameter | Value | Grid (if tuned) |
 |---|---|---|
@@ -660,9 +659,9 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
    - Logistic Regression (CV grid search + feature importance)
    - Random Forest (validation-based selection + feature importance)
    - XGBoost (early stopping + feature importance)
-   - LSTM-B (fixed architecture, optional first-fold tuning, return-aware selection)
-   - Ensemble (LR + LSTM-B mean probability)
-   - LSTM-B permutation importance
+   - LSTM (fixed architecture, optional first-fold tuning, return-aware selection)
+   - Ensemble (LR + LSTM mean probability)
+   - LSTM permutation importance
 
 3. **Backtest**
    - Signal generation (z-scoring, confidence threshold)
@@ -688,7 +687,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 
 5. **Experiments**
    - Train window sweep (504/756/1260 days)
-   - LSTM-B learning rate sweep
+   - LSTM learning rate sweep
 
 ### 📝 TODO
 
@@ -713,8 +712,8 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 - **Directional accuracy:** 51-54% is a solid result (random = 50%). With a 21-day target, slightly higher predictability is achievable for large-cap.
 - **Large-cap inversion:** `invert_signals=True` means the model identifies stocks that will underperform and the portfolio shorts the model's "high probability" stocks — mean reversion in liquid large-caps.
 - **Sharpe ratio:** With 50 stocks and k=5, diversification is limited. Expect lower Sharpe than the papers' 5.83 (which used 500 stocks with k=50).
-- **LSTM-B:** Small architecture (32h, 1L) empirically best for the small-data regime (50 stocks, 252-day train window).
-- **Ensemble:** LR + LSTM-B only; RF and XGBoost found to have negative Sharpe in large-cap universe.
+- **LSTM:** Small architecture (32h, 1L) empirically best for the small-data regime (50 stocks, 252-day train window).
+- **Ensemble:** LR + LSTM only; RF and XGBoost found to have negative Sharpe in large-cap universe.
 - **Wavelet denoising:** Disabled by default — domain shift risk when applied across OOS folds.
 - **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion creates exploitable patterns.
 - **2022 bear market:** Expect elevated drawdown. Analyse separately in sub-period section.
@@ -729,7 +728,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 
 ### 2. Removal of LSTM-A
 **Change:** LSTM-A (6 features, two-phase tuning per fold) removed.
-**Why:** LSTM-B with return-aware first-fold tuning is sufficient; LSTM-A added run-time without benefit.
+**Why:** LSTM with return-aware first-fold tuning is sufficient; LSTM-A added run-time without benefit.
 
 ### 3. Configurable Target Horizon
 **Change:** Fixed 1-day target → configurable `TARGET_HORIZON_DAYS` (currently 21).

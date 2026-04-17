@@ -1,5 +1,5 @@
 """
-Learning-rate grid for LSTM-B on the first walk-forward fold (quick diagnostic).
+Learning-rate grid for LSTM on the first walk-forward fold (quick diagnostic).
 
 Uses a capped epoch budget for speed (see LSTM_LR_SWEEP_MAX_EPOCHS in config).
 

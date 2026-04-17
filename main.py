@@ -1,13 +1,13 @@
 """
 main.py — Full pipeline orchestrator
-Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM-B, Ensemble.
+Walk-forward validated long-short strategy using LR, RF, XGBoost, LSTM, Ensemble.
 
 Models:
   - LR:       Logistic Regression (baseline)
   - RF:       Random Forest (baseline)
   - XGBoost:  Gradient Boosted Trees (baseline)
-  - LSTM-B:   Primary neural-network model (multi-feature, fixed architecture)
-  - Ensemble: Mean probability of LR + LSTM-B (RF and XGBoost excluded: negative Sharpe)
+  - LSTM:   Primary neural-network model (multi-feature, fixed architecture)
+  - Ensemble: Mean probability of LR + LSTM (RF and XGBoost excluded: negative Sharpe)
 
 Run:
     .venv/bin/python3 main.py
@@ -88,7 +88,7 @@ CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 
 # ── Pipeline options ─────────────────────────────────────────────────────────
 RUN_BASELINES = True        # Set False to skip LR, RF, XGB
-RUN_LSTMS = True            # Set False to skip LSTM-B
+RUN_LSTMS = True            # Set False to skip LSTM
 
 device = (
     torch.device('cuda') if torch.cuda.is_available()
@@ -137,7 +137,7 @@ def save_all_results(
             'subperiod': DataFrame of sub-period metrics,
         }
         daily_returns_dict: {
-            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM-B, Ensemble],
+            'gross':  pd.DataFrame columns=[Date, LR, RF, XGBoost, LSTM, Ensemble],
             'net_5':  pd.DataFrame same columns,
         }
         signals_dict: pd.DataFrame with all signals
@@ -265,7 +265,7 @@ def run_walk_forward_pipeline(
     print(f"  K (long/short): {config.K_STOCKS} stocks per side")
     print("=" * 60)
     print(f"BACKTEST — {len(MODELS)} MODELS × N FOLDS")
-    print(f"LSTM-B Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
+    print(f"LSTM Tuning: {'ENABLED' if lstm_b_tuning_enabled else 'DISABLED'}")
     print(f"Scaler Type: {config.SCALER_TYPE}")
     print(f"Configured tickers: {len(config.TICKERS)}")
     print("=" * 60)
@@ -349,13 +349,13 @@ def run_walk_forward_pipeline(
     if missing:
         raise ValueError(f'Missing columns in {os.path.basename(CACHE_FEATURES_PATH)}: {missing}')
 
-    # Verify LSTM-B features are available
+    # Verify LSTM features are available
     lstm_b_missing = [c for c in LSTM_B_FEATURES if c not in data.columns]
     if lstm_b_missing:
-        raise ValueError(f'Missing LSTM-B features: {lstm_b_missing}')
+        raise ValueError(f'Missing LSTM features: {lstm_b_missing}')
 
     print(f'\nFeature sets:')
-    print(f'  LSTM-B: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
+    print(f'  LSTM: {LSTM_B_FEATURES} ({len(LSTM_B_FEATURES)} features)')
     print(f'  Baselines (LR/RF/XGB): {BASELINE_FEATURE_COLS} ({len(BASELINE_FEATURE_COLS)} features)')
 
     # Step 4: Walk-forward folds
@@ -414,7 +414,7 @@ def run_walk_forward_pipeline(
     tuning_results = []  # Store tuning results for thesis reporting
     best_hp_b_global = None  # dict for tuned params or string 'DEFAULT'
     feat_imp_records = []       # Per-fold baseline importance accumulator (Task 5)
-    lstm_perm_records = []      # Per-fold LSTM-B permutation importance accumulator
+    lstm_perm_records = []      # Per-fold LSTM permutation importance accumulator
 
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"=" * 60}')
@@ -535,22 +535,22 @@ def run_walk_forward_pipeline(
             df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
             df_test_fold = df_ts.copy()
 
-            # ── LSTM-B: Primary neural-network model ─────────────────────────────
+            # ── LSTM: Primary neural-network model ─────────────────────────────
             t0 = time.time()
-            print('  [LSTM-B]  building sequences & training...')
+            print('  [LSTM]  building sequences & training...')
 
             # Use TEMPORAL split (splits by date, not index) - FIX for ticker-based split bug
             X_tr_b, y_tr_b, X_val_b, y_val_b, X_te_b, y_te_b, keys_tr_b, keys_val_b, keys_te_b = \
                 prepare_lstm_b_sequences_temporal_split(df_train_fold, df_test_fold, val_ratio=LSTM_B_VAL_SPLIT)
 
-            print(f'    LSTM-B sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
+            print(f'    LSTM sequences: train={len(X_tr_b)}, val={len(X_val_b)}, test={len(X_te_b)}')
 
             best_hp_b = None
             should_tune_b = lstm_b_tuning_enabled and (
                 (best_hp_b_global is None) or (not lstm_b_tune_once)
             )
             if should_tune_b:
-                print('    [LSTM-B Tuning] Running Phase 1 + Phase 2...')
+                print('    [LSTM Tuning] Running Phase 1 + Phase 2...')
                 tuned_hp_b = tune_lstm_hyperparams(
                     X_tr_b, y_tr_b,
                     X_val_b, y_val_b,
@@ -624,25 +624,25 @@ def run_walk_forward_pipeline(
                 best_hp_b = selected['hp']
 
                 print(
-                    '    [LSTM-B Tuning] Candidate scores: '
+                    '    [LSTM Tuning] Candidate scores: '
                     + ', '.join(
                         f"{c['name']}(Sharpe={c['val_sharpe_net']:.3f},AnnRet={c['val_ann_ret_net_pct']:.2f}%)"
                         for c in candidate_scores
                     )
                 )
                 if selected['name'] == 'default':
-                    print('    [LSTM-B Tuning] Tuned candidate underperformed on val returns; using default.')
+                    print('    [LSTM Tuning] Tuned candidate underperformed on val returns; using default.')
 
                 tuning_results.append({
                     'fold': fold['fold'],
-                    'model': 'LSTM-B',
+                    'model': 'LSTM',
                     'selection_basis': 'val_net_sharpe_then_annret',
                     'selected_candidate': selected['name'],
                     'val_sharpe_selected': selected['val_sharpe_net'],
                     'val_ann_ret_selected': selected['val_ann_ret_net_pct'],
                     **(tuned_hp_b if tuned_hp_b is not None else {}),
                 })
-                print(f'    [LSTM-B Tuning] Selected params: {best_hp_b}')
+                print(f'    [LSTM Tuning] Selected params: {best_hp_b}')
                 if lstm_b_tune_once:
                     best_hp_b_global = best_hp_b if best_hp_b is not None else 'DEFAULT'
             elif best_hp_b_global is not None:
@@ -650,7 +650,7 @@ def run_walk_forward_pipeline(
                     best_hp_b = None
                 else:
                     best_hp_b = best_hp_b_global
-                print(f'    [LSTM-B Tuning] Reusing tuned params: {best_hp_b}')
+                print(f'    [LSTM Tuning] Reusing tuned params: {best_hp_b}')
 
             if best_hp_b is not None:
                 model_b = train_lstm_b(
@@ -674,12 +674,12 @@ def run_walk_forward_pipeline(
                     seed=fold_seed_base + 30,
                     fold_idx=fold['fold'],
                 )
-            print(f'  [LSTM-B]  fit done in {time.time()-t0:.1f}s')
+            print(f'  [LSTM]  fit done in {time.time()-t0:.1f}s')
 
-            # LSTM-B inference
+            # LSTM inference
             probs_b = predict_lstm(model_b, X_te_b, device)
 
-            # ── LSTM-B permutation importance (Task 5) ───────────────────────
+            # ── LSTM permutation importance (Task 5) ───────────────────────
             baseline_auc = binary_auc_safe(y_te_b, probs_b, log_on_fail=False)
             if not np.isnan(baseline_auc):
                 n_lstm_feats = X_te_b.shape[2]
@@ -701,13 +701,13 @@ def run_walk_forward_pipeline(
                         'LSTM_B_perm': float(perm_norm[f_idx]),
                     })
 
-            # Free LSTM-B memory for next fold
+            # Free LSTM memory for next fold
             del model_b, X_te_b, y_te_b
             del X_tr_b, y_tr_b, X_val_b, y_val_b
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
         else:
-            print('\n  [LSTMs]     Skipping LSTM-B (RUN_LSTMS=False)')
+            print('\n  [LSTMs]     Skipping LSTM (RUN_LSTMS=False)')
 
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
@@ -740,7 +740,7 @@ def run_walk_forward_pipeline(
 
         # Report coverage
         n_lstm_b = pred['Prob_LSTM_B'].notna().sum()
-        print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM-B={n_lstm_b}')
+        print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM={n_lstm_b}')
 
         all_preds.append(pred)
 
@@ -748,7 +748,7 @@ def run_walk_forward_pipeline(
     if feat_imp_records:
         fi_per_fold = pd.DataFrame(feat_imp_records)
 
-        # Merge LSTM-B permutation importance (same feature set, join on Fold+Feature)
+        # Merge LSTM permutation importance (same feature set, join on Fold+Feature)
         if lstm_perm_records:
             lstm_df = pd.DataFrame(lstm_perm_records)
             fi_per_fold = fi_per_fold.merge(lstm_df, on=['Fold', 'Feature'], how='left')
@@ -776,7 +776,7 @@ def run_walk_forward_pipeline(
     # ── Combine folds ─────────────────────────────────────────────────────────
     full_preds = pd.concat(all_preds).reset_index(drop=True)
     print(f'\nTotal predictions: {len(full_preds)}')
-    print(f'  LSTM-B valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
+    print(f'  LSTM valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
 
     # ── Backtest each model independently ─────────────────────────────────────
     print('\n' + '=' * 60)
@@ -787,7 +787,7 @@ def run_walk_forward_pipeline(
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
-        'LSTM-B': 'Prob_LSTM_B',
+        'LSTM': 'Prob_LSTM_B',
     }
 
     port_returns_gross = {}
@@ -928,7 +928,7 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Ensemble model (LR + LSTM-B only: RF and XGBoost have negative Sharpe) ──
+    # ── Ensemble model (LR + LSTM only: RF and XGBoost have negative Sharpe) ──
     _ens_base_cols = ['Prob_LR', 'Prob_LSTM_B']
     _ens_avail = [c for c in _ens_base_cols if c in full_preds.columns]
     if _ens_avail:
@@ -989,12 +989,12 @@ def run_walk_forward_pipeline(
     else:
         print('\n  [Ensemble] skipped — no base model predictions available')
 
-    # ── Sub-period analysis (LSTM-B as primary model) ─────────────────────────
+    # ── Sub-period analysis (LSTM as primary model) ─────────────────────────
     subperiod_metrics = None
-    if 'LSTM-B' in port_returns_net_5:
+    if 'LSTM' in port_returns_net_5:
         try:
             subperiod_metrics = compute_subperiod_metrics(
-                port_returns_net_5['LSTM-B']['Net_Return']
+                port_returns_net_5['LSTM']['Net_Return']
             )
         except Exception as e:
             print(f'Warning: Could not compute sub-period metrics: {e}')

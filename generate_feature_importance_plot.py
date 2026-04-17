@@ -8,7 +8,7 @@ Four panels (one per model):
   - LR       : absolute normalised coefficient magnitude
   - RF       : mean decrease in impurity (normalised)
   - XGBoost  : average gain (normalised)
-  - LSTM-B   : permutation importance (AUC drop, normalised)
+  - LSTM   : permutation importance (AUC drop, normalised)
 
 Error bars = ±1 std across walk-forward folds (from per-fold CSV).
 Features sorted by mean importance across all models.
@@ -98,7 +98,7 @@ MODEL_CFG = [
     ("LR_coef",       "Logistic Regression\n(|coefficient|)",   "#4393c3"),
     ("RF_importance", "Random Forest\n(mean ↓ impurity)",        "#74c476"),
     ("XGB_gain",      "XGBoost\n(avg. gain)",                    "#fd8d3c"),
-    ("LSTM_B_perm",   "LSTM-B\n(permutation importance)",        "#9e9ac8"),
+    ("LSTM_B_perm",   "LSTM\n(permutation importance)",        "#9e9ac8"),
 ]
 
 fig, axes = plt.subplots(1, 4, figsize=(18, max(5, n_feat * 0.55)), sharey=True)

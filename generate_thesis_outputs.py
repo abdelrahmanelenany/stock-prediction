@@ -48,7 +48,7 @@ net_ret    = pd.read_csv(os.path.join(REPORTS, "large_cap_daily_returns_net_5bps
 gross_ret  = pd.read_csv(os.path.join(REPORTS, "large_cap_daily_returns_gross.csv"),
                          parse_dates=["Date"], index_col="Date")
 
-MODELS = ["LR", "RF", "XGBoost", "LSTM-B", "Ensemble"]
+MODELS = ["LR", "RF", "XGBoost", "LSTM", "Ensemble"]
 RF_DAILY = 0.00015   # ~3.8% / 252
 
 
@@ -276,7 +276,7 @@ MODEL_STYLES = {
     "LR":       {"color": "#aec6cf", "lw": 1.2, "ls": "--"},
     "RF":       {"color": "#7fcdbb", "lw": 1.2, "ls": "--"},
     "XGBoost":  {"color": "#fdae61", "lw": 1.2, "ls": "--"},
-    "LSTM-B":   {"color": "#2c7bb6", "lw": 2.0, "ls": "-"},
+    "LSTM":   {"color": "#2c7bb6", "lw": 2.0, "ls": "-"},
     "Ensemble": {"color": "#d7191c", "lw": 2.0, "ls": "-"},
     "SPY":      {"color": "#444444", "lw": 1.8, "ls": ":",  "alpha": 0.8},
 }

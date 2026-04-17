@@ -29,7 +29,7 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
-        'LSTM-B': 'Prob_LSTM_B',
+        'LSTM': 'Prob_LSTM_B',
     }
 
     port_returns_gross = {}
@@ -109,9 +109,9 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     results_net_5 = [compute_metrics(port_returns_net_5[m]['Net_Return']) | {'Model': m} for m in port_returns_net_5]
     
     subperiod_metrics = None
-    if 'LSTM-B' in port_returns_net_5:
+    if 'LSTM' in port_returns_net_5:
         try:
-            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM-B']['Net_Return'])
+            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM']['Net_Return'])
         except Exception as e:
             print(f'Warning: Could not compute subperiod metrics: {e}')
 

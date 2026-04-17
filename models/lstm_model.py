@@ -1,11 +1,11 @@
 """
 models/lstm_model.py
-LSTM-B: Extended multi-feature LSTM with fixed architecture (64 hidden, 2 layers, 0.2 dropout)
+LSTM: Extended multi-feature LSTM with fixed architecture (64 hidden, 2 layers, 0.2 dropout)
 
 Outputs raw logits (2 classes) — use CrossEntropyLoss in training.
 Inference applies softmax to get class probabilities.
 
-Implements Bhandari §3.3 Phase 1 hyperparameter tuning for LSTM-B
+Implements Bhandari §3.3 Phase 1 hyperparameter tuning for LSTM
 (optimizer, learning rate, batch size search on validation AUC).
 """
 import itertools
@@ -169,7 +169,7 @@ def tune_lstm_hyperparams(
              This mirrors Bhandari Algorithm 2, which tunes architecture after fixing
              the training hyperparameters.
 
-    LSTM-B calls this function with arch_grid=None (Phase 1 only, architecture stays fixed).
+    LSTM calls this function with arch_grid=None (Phase 1 only, architecture stays fixed).
 
     Parameters
     ----------
@@ -368,7 +368,7 @@ def _build_sequences_multi_with_lookback(df_combined: pd.DataFrame, seq_len: int
 
 def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
     """
-    Builds overlapping multi-feature sequences for LSTM-B.
+    Builds overlapping multi-feature sequences for LSTM.
     Scaler is fit on training fold only and applied to both splits.
 
     For test sequences, training data is used as lookback history so that
@@ -415,7 +415,7 @@ def prepare_lstm_b_sequences(df_train: pd.DataFrame, df_test: pd.DataFrame):
 def prepare_lstm_b_sequences_temporal_split(df_train: pd.DataFrame, df_test: pd.DataFrame,
                                              val_ratio: float = 0.2, feature_cols=None):
     """
-    Build LSTM-B sequences with TEMPORAL train/val split.
+    Build LSTM sequences with TEMPORAL train/val split.
 
     FIX: Instead of splitting by index (which splits by ticker), this function
     splits by DATE - the last val_ratio of training DATES become validation.
@@ -527,7 +527,7 @@ class StockLSTMTunable(nn.Module):
 
 class LSTMModelB(nn.Module):
     """
-    LSTM-B: Primary neural-network model with multi-feature input.
+    LSTM: Primary neural-network model with multi-feature input.
     Architecture: 32 hidden units, 1 layer, no dropout (empirically best).
     Single linear decoder (hidden→2).
     Outputs logits for 2 classes.
@@ -842,7 +842,7 @@ def _train_lstm_b_impl(
         criterion,
         max_epochs,
         patience,
-        "LSTM-B",
+        "LSTM",
         batch_size=batch_size,
         seed=seed,
         lr_scheduler=scheduler,
@@ -866,7 +866,7 @@ def train_lstm_b(
     dropout: float | None = None,
 ):
     """
-    Trains LSTM-B using Adam with ReduceLROnPlateau scheduler.
+    Trains LSTM using Adam with ReduceLROnPlateau scheduler.
     Returns trained model with best validation loss weights restored.
     Falls back to CPU if MPS runs out of memory.
     """
@@ -905,7 +905,7 @@ def train_lstm_b(
         )
     except RuntimeError as e:
         if "out of memory" in str(e).lower() or "MPS" in str(e):
-            print(f"  [LSTM-B] MPS out of memory, falling back to CPU...")
+            print(f"  [LSTM] MPS out of memory, falling back to CPU...")
             _clear_mps_cache()
             cpu_device = torch.device('cpu')
             model, optimizer, scheduler, criterion = _create_model_and_optim(cpu_device)
