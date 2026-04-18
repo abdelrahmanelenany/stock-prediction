@@ -357,13 +357,15 @@ LSTM_B_TUNE_MAX_EPOCHS = 35
 # Uses the same (N, seq_len, n_features) input as LSTM. Feature sets below are
 # referenced by name (`core` / `full`) during TCN tuning so that feature
 # selection becomes a tunable dimension alongside architecture.
-TCN_FEATURE_COLS_FULL = LSTM_B_FEATURE_COLS
-TCN_FEATURE_COLS_CORE = list(_CORE_FEATURE_COLS)
+TCN_FEATURE_COLS_FULL         = LSTM_B_FEATURE_COLS                          # core + market + sector
+TCN_FEATURE_COLS_CORE         = list(_CORE_FEATURE_COLS)                      # core only
+TCN_FEATURE_COLS_CORE_MARKET  = list(_CORE_FEATURE_COLS) + list(_MARKET_FEATURE_COLS)  # core + market (ablation winner)
 TCN_FEATURE_SETS = {
-    "core": TCN_FEATURE_COLS_CORE,
-    "full": TCN_FEATURE_COLS_FULL,
+    "core":         TCN_FEATURE_COLS_CORE,
+    "core_market":  TCN_FEATURE_COLS_CORE_MARKET,
+    "full":         TCN_FEATURE_COLS_FULL,
 }
-TCN_FEATURE_SET_DEFAULT = "full"   # which feature set is used before/without tuning
+TCN_FEATURE_SET_DEFAULT = "core_market"   # ablation winner: core + market features
 
 TCN_SEQ_LEN         = SEQ_LEN
 TCN_NUM_CHANNELS    = [16, 16, 16]   # 3 levels x 16 filters; ~10k params ≈ LSTM's ~7k
