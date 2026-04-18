@@ -1,14 +1,14 @@
 # CLAUDE.md — Neural Networks for Stock Behavior Prediction
 > Bachelor's Project · Complete Implementation Reference for IDE Copilot
 > Based on Fischer & Krauss (2017), Krauss, Do & Huck (2017), and Bhandari et al. (2022)
-> **Last Updated:** 2026-04-16 (Reflects current implementation)
+> **Last Updated:** 2026-04-18 (Reflects current implementation)
 
 ---
 
 ## Project Summary
 
 Build a **walk-forward validated, backtested long-short trading strategy** using ML models
-(Logistic Regression, Random Forest, XGBoost, LSTM, Ensemble) on a configurable stock universe
+(Logistic Regression, Random Forest, XGBoost, LSTM, TCN, Ensemble) on a configurable stock universe
 over **2019–2024**. The pipeline predicts each stock's probability of outperforming
 the cross-sectional median N-day forward return, ranks stocks by that probability, and constructs
 an equal-weighted long-short portfolio. Features include technical indicators plus optional
@@ -52,6 +52,7 @@ stock_prediction/
 ├── models/
 │   ├── baselines.py                  # LR, RF, XGBoost (with grid search + feature importances)
 │   ├── lstm_model.py                 # LSTM architecture + Bhandari-style tuning
+│   ├── tcn_model.py                  # TCN architecture (Bai et al. 2018) + tuning
 │   └── calibration.py               # Probability calibration (isotonic/Platt)
 ├── backtest/
 │   ├── signals.py                    # Rank → Long/Short/Hold signals (smoothing, z-scoring, holding)
@@ -61,6 +62,7 @@ stock_prediction/
 │   └── metrics_utils.py              # binary_auc_safe, classification_sanity_checks, log_split_balance
 ├── experiments/
 │   ├── lstm_lr_sweep.py              # LSTM learning rate grid sweep
+│   ├── tcn_arch_sweep.py             # TCN kernel × levels × channels diagnostic sweep
 │   └── train_window_sweep.py         # Train-window length comparison (~1y / ~3y / ~5y)
 ├── analysis/
 │   └── feature_correlation.py        # Feature correlation analysis and selection
@@ -73,13 +75,15 @@ stock_prediction/
 │   ├── large_cap_feature_importances_*.csv  # Per-fold + averaged feature importances
 │   ├── large_cap_fold_sharpe_per_model.csv  # Fold-level Sharpe diagnostics
 │   ├── large_cap_lstm_tuning_results.csv    # LSTM hyperparameter tuning results
+│   ├── large_cap_tcn_tuning_results.csv     # TCN hyperparameter tuning results
 │   ├── large_cap_full_predictions.csv       # Raw per-fold model probabilities
 │   ├── large_cap_daily_returns_*.csv        # Daily return series
 │   ├── large_cap_signals_all_models.csv     # All model signals
 │   ├── large_cap_backtest_summary.txt       # Human-readable summary
 │   ├── small_cap_*/                  # Same outputs for small-cap universe
 │   ├── fold_reports/                 # Per-fold JSON diagnostic artifacts
-│   └── training_logs/               # LSTM epoch-level training logs (CSV)
+│   └── training_logs/               # LSTM + TCN epoch-level training logs (CSV)
+├── verify_bug_fixes.py               # Verification script for known bug fixes
 └── notebooks/                        # Visualisation & reporting (placeholder)
 ```
 
@@ -117,7 +121,7 @@ A `UniverseConfig` dataclass captures all universe-specific settings:
 - `invert_signals` — large-cap inverts portfolio direction (mean-reversion)
 - `invert_features` — flips momentum features for reversal-oriented universes
 - `sector_min_size`, `sector_winsorize`, `sector_winsorize_pct`
-- `k_stocks`, `include_lstm_b_in_ensemble`
+- `k_stocks`, `include_lstm_b_in_ensemble`, `include_tcn_in_ensemble`
 
 **Active config objects:** `LARGE_CAP_CONFIG` and `SMALL_CAP_CONFIG`.
 
@@ -160,9 +164,17 @@ A `UniverseConfig` dataclass captures all universe-specific settings:
 - Market context (if `MARKET_FEATURES_ENABLED=True`): `Market_Return_1d/5d/21d`, `Market_Vol_20d/60d`, `RelToMarket_1d/5d/21d`, `Beta_60d`
 - Sector context (if `SECTOR_FEATURES_ENABLED=True`): `Sector_Return_1d/5d/21d`, `Sector_Vol_20d/60d`, `SectorRelZ_Return_1d`
 
-**LSTM features** (`LSTM_B_FEATURE_COLS`): `Return_1d`, `Return_5d`, `Return_21d`, `RSI_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn` + market/sector context features (if enabled).
+**LSTM features** (`LSTM_B_FEATURE_COLS`): `Return_1d`, `Return_5d`, `Return_21d`, `RSI_14`, `BB_PctB`, `RealVol_20d`, `Volume_Ratio`, `SectorRelReturn` + market/sector context features (if enabled by `LSTM_MARKET_FEATURES_ENABLED` / `LSTM_SECTOR_FEATURES_ENABLED`).
 
-**Baseline features** (`BASELINE_FEATURE_COLS`): Same as `LSTM_B_FEATURE_COLS` for fair comparison.
+**TCN features**: Same as LSTM by default (`TCN_FEATURE_COLS_FULL = LSTM_B_FEATURE_COLS`). A `core`-only subset (`TCN_FEATURE_COLS_CORE`) is also available and may be selected during tuning.
+
+**Baseline features** (`BASELINE_FEATURE_COLS`): Core features + market features (`BASELINE_MARKET_FEATURES_ENABLED=True`) but **no sector features** (`BASELINE_SECTOR_FEATURES_ENABLED=False`).
+
+**Per-model feature flags** (control which computed features each model receives):
+| Flag | LR/RF/XGBoost | LSTM | TCN |
+|---|---|---|---|
+| `*_MARKET_FEATURES_ENABLED` | True | True | True (via full set) |
+| `*_SECTOR_FEATURES_ENABLED` | False | True | True (via full set) |
 
 ### LSTM Architecture (Fixed)
 
@@ -185,6 +197,30 @@ A `UniverseConfig` dataclass captures all universe-specific settings:
 Selection criterion: validation net Sharpe (then annualised return as tiebreaker) — NOT AUC alone.
 Return-aware guardrail: tuned candidate is only accepted if it outperforms the default on val trading metrics.
 
+### TCN Architecture (Fixed defaults, optional tuning)
+
+| Parameter | Value | Grid (if tuned) |
+|---|---|---|
+| Num channels | [16, 16, 16] (3 levels × 16 filters) | [[16,16,16], [32,32,32], [32,32,32,32]] |
+| Kernel size | 3 | [3, 5] |
+| Dropout | 0.2 | [0.1, 0.2, 0.3] |
+| Learning rate | 0.001 | [3e-4, 1e-3, 3e-3] |
+| Batch size | 256 | [64, 128] |
+| Optimizer | Adam | [adam, nadam] |
+| Label smoothing | 0.1 | — |
+| Weight norm | False | — |
+| Sequence length | 30 | — |
+| Max epochs | 200 (35 during tuning) | — |
+| Early stopping patience | 15 (4 during tuning) | — |
+| LR scheduler patience | 7 | — |
+| LR scheduler factor | 0.5 | — |
+| Weight decay | 1e-4 | — |
+| Feature set | full | [core, full] |
+
+**TCN tuning:** `TCN_ENABLE_TUNING=True`, `TCN_TUNE_ON_FIRST_FOLD_ONLY=True` (same first-fold pattern as LSTM).
+Two-phase tuning: Phase 1 = optimizer/lr/batch; Phase 2 = architecture + feature set.
+`TCN_USE_WEIGHT_NORM=False` — disabled because weight_norm causes MPS non-determinism and breaks kaiming init.
+
 ### LSTM Diagnostics
 
 | Parameter | Value |
@@ -199,7 +235,7 @@ Return-aware guardrail: tuned candidate is only accepted if it outperforms the d
 ### Normalization & Regularization
 
 - `SCALER_TYPE`: "standard" (Z-score normalisation)
-- `WINSORIZE_ENABLED`: True — train quantile clipping (0.5th–99.5th percentile) applied before scaler
+- `WINSORIZE_ENABLED`: **False** (disabled — enable for small-cap where extreme outliers destabilise training)
 - `WINSORIZE_LOWER_Q`: 0.005, `WINSORIZE_UPPER_Q`: 0.995
 
 ### Wavelet Denoising
@@ -326,17 +362,18 @@ Separate scalers are fit for baseline features vs LSTM features (different featu
 
 ## Step 6 — Models
 
-**Status:** ✅ 4 base models + Ensemble implemented (LSTM-A removed)
+**Status:** ✅ 5 base models + Ensemble implemented (LSTM-A removed)
 
 ### Summary Table
 
 | Model | Features | Architecture | Notes |
 |---|---|---|---|
-| LR | LSTM features | Logistic Regression | L2 regularization, TimeSeriesSplit CV |
-| RF | LSTM features | Random Forest | Val-based hyperparameter selection |
-| XGBoost | LSTM features | Gradient Boosting | Early stopping on val AUC |
-| LSTM | LSTM features | 32h, 1L, 0.0d (fixed) | Optional Bhandari-style tuning |
-| Ensemble | LR + LSTM | Mean probability | RF and XGBoost excluded (negative Sharpe) |
+| LR | Baseline features (core + market) | Logistic Regression | L2 regularization, TimeSeriesSplit CV |
+| RF | Baseline features (core + market) | Random Forest | Val-based hyperparameter selection |
+| XGBoost | Baseline features (core + market) | Gradient Boosting | Early stopping on val AUC |
+| LSTM | LSTM features (core + market + sector) | 32h, 1L, 0.0d (fixed) | Optional Bhandari-style tuning |
+| TCN | TCN features (core + market + sector) | 3×[16,16,16] dilated residual blocks | Optional two-phase tuning, label smoothing |
+| Ensemble | LR + LSTM + TCN | Mean probability | RF and XGBoost excluded (negative Sharpe) |
 
 ### 6a. Logistic Regression
 
@@ -367,12 +404,22 @@ Optional Bhandari §3.3-style two-phase tuning (Phase 1: optimizer/lr/batch; Pha
 Per-fold permutation importance computed for LSTM (feature drop in AUC after shuffling).
 Gradient clipping at `LSTM_MAX_GRAD_NORM=1.0`.
 
-### 6e. Ensemble
+### 6e. TCN (Temporal Convolutional Network)
 
-Mean probability of **LR + LSTM only** (RF and XGBoost excluded due to negative Sharpe
-in large-cap universe). Controlled by `include_lstm_b_in_ensemble` in `UniverseConfig`.
+Bai et al. (2018) architecture: stack of dilated causal `Conv1d` residual blocks (`TemporalBlock`).
+Input: `(N, seq_len, n_features)` — transposed internally to `(N, channels, seq_len)` for `Conv1d`.
+Final-timestep output feeds a 2-class linear decoder with `CrossEntropyLoss` + label smoothing (0.1).
+`Chomp1d` removes right-side padding to enforce causality.
+Reuses LSTM infrastructure helpers (`_build_optimizer`, `_build_sequences_multi`, `align_predictions_to_df`, etc.).
+Optional two-phase tuning: Phase 1 = optimizer/lr/batch; Phase 2 = architecture + feature set.
+Permutation importance computed per fold on test set.
 
-### 6f. Feature Importance (all models)
+### 6f. Ensemble
+
+Mean probability of **LR + LSTM + TCN** (RF and XGBoost excluded due to negative Sharpe
+in large-cap universe). Controlled by `include_lstm_b_in_ensemble` and `include_tcn_in_ensemble` in `UniverseConfig`.
+
+### 6g. Feature Importance (all models)
 
 `extract_feature_importances()` in `models/baselines.py` extracts per-fold importance from
 all three baseline models. LSTM uses permutation importance (AUC drop after feature shuffle).
@@ -458,6 +505,7 @@ Entry points:
 **Pipeline flags:**
 - `RUN_BASELINES` (True): enable/disable LR, RF, XGBoost.
 - `RUN_LSTMS` (True): enable/disable LSTM.
+- `RUN_TCNS` (True): enable/disable TCN.
 - All results prefixed by `config.UNIVERSE_MODE` in reports dir.
 
 **Key implementation highlights:**
@@ -468,11 +516,13 @@ Entry points:
 5. **Causal wavelet denoising** (when enabled): thresholds from train only, applied per-split.
 6. **Winsorization + standardisation**: per fold, fit on train only.
 7. **LSTM tuning**: optional, first-fold only, return-aware selection.
-8. **LSTM permutation importance**: computed per fold on test set.
-9. **Signal pipeline**: smoothing → z-score → threshold → holding constraint.
-10. **Ensemble**: LR + LSTM only (RF/XGBoost excluded empirically).
-11. **Per-fold fold reports** saved when `SAVE_FOLD_REPORTS=True`.
-12. **Full predictions CSV** saved for downstream stitching (`combine_and_backtest.py`).
+8. **TCN tuning**: optional, first-fold only, two-phase (training hyperparams + architecture).
+9. **LSTM permutation importance**: computed per fold on test set.
+10. **TCN permutation importance**: computed per fold on test set.
+11. **Signal pipeline**: smoothing → z-score → threshold → holding constraint.
+12. **Ensemble**: LR + LSTM + TCN (RF/XGBoost excluded empirically).
+13. **Per-fold fold reports** saved when `SAVE_FOLD_REPORTS=True`.
+14. **Full predictions CSV** saved for downstream stitching (`combine_and_backtest.py`).
 
 ---
 
@@ -568,6 +618,12 @@ Results saved to `reports/train_window_comparison.csv`.
 LSTM learning rate grid sweep: `LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]`.
 Capped at `LSTM_LR_SWEEP_MAX_EPOCHS = 40` for budget control.
 
+### `experiments/tcn_arch_sweep.py`
+
+Quick diagnostic sweep of TCN kernel × levels × channels on fold 0 only.
+Grid: `TCN_SWEEP_KERNEL_GRID=[2,3,5]`, `TCN_SWEEP_LEVELS_GRID=[3,4,5]`, `TCN_SWEEP_CHANNEL_GRID=[32,64]`.
+Capped at `TCN_SWEEP_MAX_EPOCHS=40`. Reports receptive field, param count, AUC.
+
 ### `combine_and_backtest.py`
 
 Stitches together separate baseline and LSTM run predictions when `RUN_BASELINES` and
@@ -595,6 +651,26 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 | LR scheduler factor | 0.5 | — |
 | Weight decay | 1e-4 | — |
 | Gradient clip norm | 1.0 | — |
+
+### TCN (Fixed defaults, optional two-phase tuning)
+
+| Parameter | Value | Grid (if tuned) |
+|---|---|---|
+| Num channels | [16, 16, 16] | [[16,16,16], [32,32,32], [32,32,32,32]] |
+| Kernel size | 3 | [3, 5] |
+| Dropout | 0.2 | [0.1, 0.2, 0.3] |
+| Learning rate | 0.001 | [3e-4, 1e-3, 3e-3] |
+| Batch size | 256 | [64, 128] |
+| Optimizer | Adam | [adam, nadam] |
+| Label smoothing | 0.1 | — |
+| Weight norm | False | — |
+| Sequence length | 30 | — |
+| Max epochs | 200 (35 during tuning) | — |
+| Early stopping patience | 15 (4 during tuning) | — |
+| LR scheduler patience | 7 | — |
+| LR scheduler factor | 0.5 | — |
+| Weight decay | 1e-4 | — |
+| Feature set | full | [core, full] |
 
 ### XGBoost
 
@@ -660,8 +736,10 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
    - Random Forest (validation-based selection + feature importance)
    - XGBoost (early stopping + feature importance)
    - LSTM (fixed architecture, optional first-fold tuning, return-aware selection)
-   - Ensemble (LR + LSTM mean probability)
+   - TCN (dilated causal Conv1d residual blocks, optional two-phase tuning, label smoothing)
+   - Ensemble (LR + LSTM + TCN mean probability)
    - LSTM permutation importance
+   - TCN permutation importance
 
 3. **Backtest**
    - Signal generation (z-scoring, confidence threshold)
@@ -688,6 +766,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 5. **Experiments**
    - Train window sweep (504/756/1260 days)
    - LSTM learning rate sweep
+   - TCN architecture sweep (kernel × levels × channels)
 
 ### 📝 TODO
 
@@ -713,7 +792,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 - **Large-cap inversion:** `invert_signals=True` means the model identifies stocks that will underperform and the portfolio shorts the model's "high probability" stocks — mean reversion in liquid large-caps.
 - **Sharpe ratio:** With 50 stocks and k=5, diversification is limited. Expect lower Sharpe than the papers' 5.83 (which used 500 stocks with k=50).
 - **LSTM:** Small architecture (32h, 1L) empirically best for the small-data regime (50 stocks, 252-day train window).
-- **Ensemble:** LR + LSTM only; RF and XGBoost found to have negative Sharpe in large-cap universe.
+- **Ensemble:** LR + LSTM + TCN; RF and XGBoost found to have negative Sharpe in large-cap universe.
 - **Wavelet denoising:** Disabled by default — domain shift risk when applied across OOS folds.
 - **COVID crash (Feb-Apr 2020):** Expect elevated returns — extreme cross-sectional dispersion creates exploitable patterns.
 - **2022 bear market:** Expect elevated drawdown. Analyse separately in sub-period section.
@@ -751,8 +830,16 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 **Why:** Relative-to-market and relative-to-sector features provide richer cross-sectional context.
 
 ### 8. Winsorization
-**Change:** Added quantile clipping before standardisation.
-**Why:** Extreme feature outliers (especially in small-cap) destabilise training.
+**Change:** Added quantile clipping before standardisation (currently disabled, `WINSORIZE_ENABLED=False`).
+**Why:** Extreme feature outliers (especially in small-cap) destabilise training. Disabled in large-cap where outliers are less extreme.
+
+### 9. TCN Model Added
+**Change:** `models/tcn_model.py` implementing Bai et al. (2018) Temporal Convolutional Network alongside LSTM.
+**Why:** Provides a second neural-network model for comparison; TCN's parallelisable dilated convolutions complement LSTM's recurrent inductive bias. TCN is included in the Ensemble.
+
+### 10. Per-Model Feature Differentiation
+**Change:** Baselines (LR/RF/XGBoost) use market features but not sector features; LSTM and TCN use both.
+**Why:** Sector features add noise for tree/linear models at this universe size but provide useful cross-sectional context for sequence models.
 
 ---
 
@@ -766,6 +853,7 @@ Loads `{universe}_full_predictions.csv` from both runs and runs combined backtes
 - Fama, E. (1970). Efficient Capital Markets: A Review of Theory and Empirical Work. *Journal of Finance*, 25(2), 383-417.
 - Chen, T. & Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. *KDD 2016*.
 - Donoho, D.L. & Johnstone, I.M. (1994). Ideal spatial adaptation by wavelet shrinkage. *Biometrika*, 81(3), 425-455.
+- Bai, S., Kolter, J.Z. & Koltun, V. (2018). *An Empirical Evaluation of Generic Convolutional and Recurrent Networks for Sequence Modeling.* arXiv:1803.01271.
 
 ---
 

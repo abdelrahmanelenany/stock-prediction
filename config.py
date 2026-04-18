@@ -25,6 +25,9 @@ class UniverseConfig:
     # LSTM inclusion in ensemble
     include_lstm_b_in_ensemble: bool
 
+    # TCN inclusion in ensemble
+    include_tcn_in_ensemble: bool = True
+
 # config.py — Single source of truth for all hyperparameters and constants
 # Implements Bhandari et al. (2022) extensions from IMPLEMENTATION_EXTENSIONS.md
 # Universe-mode setup supports large-cap vs relative small-cap S&P 500 experiments.
@@ -350,6 +353,59 @@ LSTM_B_TUNE_REPLICATES = 1
 LSTM_B_TUNE_PATIENCE = 4
 LSTM_B_TUNE_MAX_EPOCHS = 35
 
+# ── TCN: Temporal Convolutional Network (Bai et al. 2018) ────────────────────
+# Uses the same (N, seq_len, n_features) input as LSTM. Feature sets below are
+# referenced by name (`core` / `full`) during TCN tuning so that feature
+# selection becomes a tunable dimension alongside architecture.
+TCN_FEATURE_COLS_FULL = LSTM_B_FEATURE_COLS
+TCN_FEATURE_COLS_CORE = list(_CORE_FEATURE_COLS)
+TCN_FEATURE_SETS = {
+    "core": TCN_FEATURE_COLS_CORE,
+    "full": TCN_FEATURE_COLS_FULL,
+}
+TCN_FEATURE_SET_DEFAULT = "full"   # which feature set is used before/without tuning
+
+TCN_SEQ_LEN         = SEQ_LEN
+TCN_NUM_CHANNELS    = [16, 16, 16]   # 3 levels x 16 filters; ~10k params ≈ LSTM's ~7k
+TCN_KERNEL_SIZE     = 3
+TCN_DROPOUT         = 0.2
+TCN_LABEL_SMOOTHING = 0.1            # Prevents overconfident predictions; improves probability spread
+TCN_USE_WEIGHT_NORM = False  # Disabled: weight_norm causes MPS non-determinism and breaks
+                              # kaiming init (computed weight attr is overwritten each fwd)
+
+TCN_OPTIMIZER   = "adam"
+TCN_LR          = 1e-3
+TCN_BATCH       = 256
+TCN_MAX_EPOCHS  = 200
+TCN_PATIENCE    = 15
+TCN_LR_PATIENCE = 7
+TCN_LR_FACTOR   = 0.5
+TCN_VAL_SPLIT   = 0.2
+TCN_WD          = 1e-4
+
+TCN_ENABLE_TUNING           = True
+TCN_TUNE_ON_FIRST_FOLD_ONLY = True
+TCN_HYPERPARAM_GRID = {                  # Phase 1 (training hyperparameters)
+    "optimizer":     ["adam", "nadam"],
+    "learning_rate": [3e-4, 1e-3, 3e-3],
+    "batch_size":    [64, 128],
+}
+TCN_ARCH_GRID = {                        # Phase 2 (architecture + feature set)
+    "num_channels": [[16, 16, 16], [32, 32, 32], [32, 32, 32, 32]],
+    "kernel_size":  [3, 5],
+    "dropout":      [0.1, 0.2, 0.3],
+    "feature_set":  ["core", "full"],
+}
+TCN_TUNE_REPLICATES = 1
+TCN_TUNE_PATIENCE   = 4
+TCN_TUNE_MAX_EPOCHS = 35
+
+# Arch sweep (experiments/tcn_arch_sweep.py)
+TCN_SWEEP_KERNEL_GRID   = [2, 3, 5]
+TCN_SWEEP_LEVELS_GRID   = [3, 4, 5]
+TCN_SWEEP_CHANNEL_GRID  = [32, 64]
+TCN_SWEEP_MAX_EPOCHS    = 40
+
 # ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
 USE_WAVELET_DENOISING = False    # Set False to use raw prices (Fixes OOS domain shift)
 WAVELET_TYPE          = "haar"  # Paper uses Haar wavelets
@@ -389,7 +445,7 @@ XGB_REG_LAMBDA   = 1.0    # L2 regularization
 RANDOM_SEED = 42
 
 # ── Model registry ────────────────────────────────────────────────────────────
-MODELS = ['LR', 'RF', 'XGBoost', 'LSTM']
+MODELS = ['LR', 'RF', 'XGBoost', 'LSTM', 'TCN']
 
 LARGE_CAP_CONFIG = UniverseConfig(
     name="large_cap",
@@ -403,6 +459,7 @@ LARGE_CAP_CONFIG = UniverseConfig(
     sector_winsorize_pct=0.05,
     k_stocks=5,
     include_lstm_b_in_ensemble=True,
+    include_tcn_in_ensemble=True,
 )
 
 SMALL_CAP_CONFIG = UniverseConfig(
@@ -417,4 +474,5 @@ SMALL_CAP_CONFIG = UniverseConfig(
     sector_winsorize_pct=0.0,
     k_stocks=5,
     include_lstm_b_in_ensemble=True,  # LSTM unreliable in small-cap
+    include_tcn_in_ensemble=True,
 )

@@ -48,6 +48,12 @@ from models.lstm_model import (
     predict_lstm, align_predictions_to_df,
     tune_lstm_hyperparams,
 )
+from models.tcn_model import (
+    prepare_tcn_sequences_temporal_split,
+    train_tcn,
+    predict_tcn,
+    tune_tcn_hyperparams,
+)
 from backtest.signals import (
     generate_signals,
     smooth_probabilities,
@@ -89,6 +95,7 @@ CACHE_FEATURES_PATH = f'data/processed/features_{config.UNIVERSE_MODE}.csv'
 # ── Pipeline options ─────────────────────────────────────────────────────────
 RUN_BASELINES = True        # Set False to skip LR, RF, XGB
 RUN_LSTMS = True            # Set False to skip LSTM
+RUN_TCNS = bool(getattr(config, 'RUN_TCNS', True))   # Set False to skip TCN
 
 device = (
     torch.device('cuda') if torch.cuda.is_available()
@@ -254,6 +261,8 @@ def run_walk_forward_pipeline(
     """
     lstm_b_tuning_enabled = bool(getattr(config, 'LSTM_B_ENABLE_TUNING', False))
     lstm_b_tune_once = bool(getattr(config, 'LSTM_B_TUNE_ON_FIRST_FOLD_ONLY', True))
+    tcn_tuning_enabled = bool(getattr(config, 'TCN_ENABLE_TUNING', False))
+    tcn_tune_once = bool(getattr(config, 'TCN_TUNE_ON_FIRST_FOLD_ONLY', True))
 
     print("=" * 60)
     print("EXPERIMENT CONFIGURATION")
@@ -376,18 +385,20 @@ def run_walk_forward_pipeline(
 
     ablation_rows: list[dict] = []
 
-    def _score_lstm_b_candidate_on_val(preds_val: pd.DataFrame) -> tuple[float, float]:
+    def _score_candidate_on_val(preds_val: pd.DataFrame,
+                                 prob_col: str = 'Prob_LSTM_B') -> tuple[float, float]:
         """
         Score a candidate on validation TRADING performance (not only AUC).
         Returns (val_sharpe_net, val_annual_return_net_pct).
+        Works for any model by passing its Prob_* column name.
         """
-        valid = preds_val.dropna(subset=['Prob_LSTM_B']).copy()
+        valid = preds_val.dropna(subset=[prob_col]).copy()
         if len(valid) == 0:
             return float('-inf'), float('-inf')
 
         smoothed = smooth_probabilities(
             valid,
-            'Prob_LSTM_B',
+            prob_col,
             alpha=SIGNAL_SMOOTH_ALPHA,
             ema_method=SIGNAL_EMA_METHOD,
             ema_span=SIGNAL_EMA_SPAN,
@@ -395,7 +406,7 @@ def run_walk_forward_pipeline(
         sig_df, _ = generate_signals(
             smoothed,
             k=K_STOCKS,
-            prob_col='Prob_LSTM_B_Smooth',
+            prob_col=f'{prob_col}_Smooth',
             return_diagnostics=True,
         )
         sig_df = apply_holding_period_constraint(sig_df, min_hold_days=MIN_HOLDING_DAYS)
@@ -409,12 +420,17 @@ def run_walk_forward_pipeline(
         met_val = compute_metrics(port_val['Net_Return'])
         return float(met_val['Sharpe Ratio']), float(met_val['Annualized Return (%)'])
 
+    # Backward-compatible alias used inside the LSTM block.
+    _score_lstm_b_candidate_on_val = _score_candidate_on_val
+
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
     tuning_results = []  # Store tuning results for thesis reporting
     best_hp_b_global = None  # dict for tuned params or string 'DEFAULT'
+    best_hp_t_global = None  # TCN tuned params (dict) or string 'DEFAULT'
     feat_imp_records = []       # Per-fold baseline importance accumulator (Task 5)
     lstm_perm_records = []      # Per-fold LSTM permutation importance accumulator
+    tcn_perm_records = []       # Per-fold TCN permutation importance accumulator
 
     for fold in tqdm(folds, desc="Walk-Forward Folds", unit="fold"):
         print(f'\n{"=" * 60}')
@@ -530,6 +546,9 @@ def run_walk_forward_pipeline(
 
         probs_b = None
         keys_te_b = None
+        probs_t = None
+        keys_te_t = None
+        tcn_feature_cols_used = None
 
         if RUN_LSTMS:
             df_train_fold = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
@@ -709,12 +728,250 @@ def run_walk_forward_pipeline(
         else:
             print('\n  [LSTMs]     Skipping LSTM (RUN_LSTMS=False)')
 
+        if RUN_TCNS:
+            df_train_fold_t = pd.concat([df_tr, df_v]).sort_values(['Ticker', 'Date'])
+            df_test_fold_t = df_ts.copy()
+
+            t0 = time.time()
+            print('  [TCN]   building sequences & training...')
+
+            # Build sequences for every feature set referenced by the TCN tuning grid.
+            # This lets Phase 2 pick the best (arch × feature_set) jointly.
+            tcn_feature_sets = dict(getattr(config, 'TCN_FEATURE_SETS', {
+                'full': config.LSTM_B_FEATURE_COLS,
+            }))
+            should_tune_t = tcn_tuning_enabled and (
+                (best_hp_t_global is None) or (not tcn_tune_once)
+            )
+            # Only build the default feature-set sequences when we're not tuning,
+            # to avoid paying the cost of the core set on every fold.
+            if should_tune_t:
+                feature_sets_to_build = list(tcn_feature_sets.keys())
+            else:
+                # Reuse the tuned feature set from fold 1 when available.
+                tuned_fs = (
+                    best_hp_t_global.get('feature_set')
+                    if isinstance(best_hp_t_global, dict)
+                    else None
+                )
+                chosen_fs = tuned_fs if tuned_fs in tcn_feature_sets else config.TCN_FEATURE_SET_DEFAULT
+                feature_sets_to_build = [chosen_fs]
+
+            built_seqs: dict[str, dict[str, np.ndarray]] = {}
+            built_test: dict[str, tuple] = {}
+            for fs_name in feature_sets_to_build:
+                fs_cols = tcn_feature_sets[fs_name]
+                X_tr_t, y_tr_t, X_val_t, y_val_t, X_te_t, y_te_t, _, keys_val_t, keys_te_t_tmp = \
+                    prepare_tcn_sequences_temporal_split(
+                        df_train_fold_t, df_test_fold_t,
+                        feature_cols=fs_cols,
+                        val_ratio=float(config.TCN_VAL_SPLIT),
+                    )
+                built_seqs[fs_name] = {
+                    'X_tr': X_tr_t, 'y_tr': y_tr_t,
+                    'X_val': X_val_t, 'y_val': y_val_t,
+                    'keys_val': keys_val_t,
+                }
+                built_test[fs_name] = (X_te_t, y_te_t, keys_te_t_tmp)
+                print(
+                    f'    TCN sequences [{fs_name}]: train={len(X_tr_t)}, '
+                    f'val={len(X_val_t)}, test={len(X_te_t)}'
+                )
+
+            best_hp_t = None
+            if should_tune_t:
+                print('    [TCN Tuning] Running Phase 1 + Phase 2...')
+                seed_fs = config.TCN_FEATURE_SET_DEFAULT
+                tuned_hp_t = tune_tcn_hyperparams(
+                    seqs_by_feature_set=built_seqs,
+                    device=device,
+                    arch_grid=config.TCN_ARCH_GRID,
+                    train_grid=config.TCN_HYPERPARAM_GRID,
+                    tune_replicates=int(config.TCN_TUNE_REPLICATES),
+                    tune_patience=int(config.TCN_TUNE_PATIENCE),
+                    tune_max_epochs=int(config.TCN_TUNE_MAX_EPOCHS),
+                    seed_num_channels=list(config.TCN_NUM_CHANNELS),
+                    seed_kernel_size=int(config.TCN_KERNEL_SIZE),
+                    seed_dropout=float(config.TCN_DROPOUT),
+                    seed_feature_set=seed_fs,
+                    seed=fold_seed_base + 45,
+                )
+
+                # Return-aware guardrail: compare tuned-vs-default on val trading metrics.
+                candidate_scores = []
+                for cand_name, cand_hp in [('default', None), ('tuned', tuned_hp_t)]:
+                    cand_fs = (
+                        cand_hp['feature_set']
+                        if (cand_hp is not None and cand_hp.get('feature_set') in built_seqs)
+                        else config.TCN_FEATURE_SET_DEFAULT
+                    )
+                    blk = built_seqs[cand_fs]
+                    if cand_hp is None:
+                        model_t_cand = train_tcn(
+                            blk['X_tr'], blk['y_tr'],
+                            blk['X_val'], blk['y_val'],
+                            device,
+                            seed=fold_seed_base + 48,
+                            fold_idx=fold['fold'],
+                        )
+                    else:
+                        model_t_cand = train_tcn(
+                            blk['X_tr'], blk['y_tr'],
+                            blk['X_val'], blk['y_val'],
+                            device,
+                            seed=fold_seed_base + 48,
+                            fold_idx=fold['fold'],
+                            optimizer_name=cand_hp['optimizer'],
+                            learning_rate=cand_hp['lr'],
+                            batch_size=cand_hp['batch_size'],
+                            num_channels=cand_hp['num_channels'],
+                            kernel_size=cand_hp['kernel_size'],
+                            dropout=cand_hp['dropout'],
+                        )
+                    probs_val_t = predict_tcn(model_t_cand, blk['X_val'], device)
+                    pred_val_t = df_v.copy().reset_index(drop=True)
+                    pred_val_t['Prob_TCN'] = align_predictions_to_df(
+                        probs_val_t, blk['keys_val'], df_v
+                    )
+                    val_sharpe_t, val_ann_ret_t = _score_candidate_on_val(pred_val_t, 'Prob_TCN')
+                    candidate_scores.append({
+                        'name': cand_name,
+                        'hp': cand_hp,
+                        'feature_set': cand_fs,
+                        'val_sharpe_net': val_sharpe_t,
+                        'val_ann_ret_net_pct': val_ann_ret_t,
+                    })
+                    del model_t_cand
+                    if torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
+
+                candidate_scores = sorted(
+                    candidate_scores,
+                    key=lambda x: (x['val_sharpe_net'], x['val_ann_ret_net_pct']),
+                    reverse=True,
+                )
+                selected = candidate_scores[0]
+                best_hp_t = selected['hp']
+                print(
+                    '    [TCN Tuning] Candidate scores: '
+                    + ', '.join(
+                        f"{c['name']}(Sharpe={c['val_sharpe_net']:.3f},"
+                        f"AnnRet={c['val_ann_ret_net_pct']:.2f}%,feat={c['feature_set']})"
+                        for c in candidate_scores
+                    )
+                )
+                if selected['name'] == 'default':
+                    print('    [TCN Tuning] Tuned candidate underperformed on val returns; using default.')
+
+                tuning_results.append({
+                    'fold': fold['fold'],
+                    'model': 'TCN',
+                    'selection_basis': 'val_net_sharpe_then_annret',
+                    'selected_candidate': selected['name'],
+                    'val_sharpe_selected': selected['val_sharpe_net'],
+                    'val_ann_ret_selected': selected['val_ann_ret_net_pct'],
+                    **(tuned_hp_t if tuned_hp_t is not None else {}),
+                })
+                print(f'    [TCN Tuning] Selected params: {best_hp_t}')
+                if tcn_tune_once:
+                    best_hp_t_global = best_hp_t if best_hp_t is not None else 'DEFAULT'
+            elif best_hp_t_global is not None:
+                if best_hp_t_global == 'DEFAULT':
+                    best_hp_t = None
+                else:
+                    best_hp_t = best_hp_t_global
+                print(f'    [TCN Tuning] Reusing tuned params: {best_hp_t}')
+
+            # Resolve which feature set + sequences to use for final training.
+            chosen_fs = (
+                best_hp_t.get('feature_set')
+                if (isinstance(best_hp_t, dict) and best_hp_t.get('feature_set') in built_seqs)
+                else config.TCN_FEATURE_SET_DEFAULT
+            )
+            if chosen_fs not in built_seqs:
+                # Fallback: we chose a feature set that wasn't built for this fold
+                # (e.g. tuning ran on fold 1, non-default fs requested). Build it now.
+                fs_cols = tcn_feature_sets[chosen_fs]
+                X_tr_t, y_tr_t, X_val_t, y_val_t, X_te_t, y_te_t, _, keys_val_t, keys_te_t_tmp = \
+                    prepare_tcn_sequences_temporal_split(
+                        df_train_fold_t, df_test_fold_t,
+                        feature_cols=fs_cols,
+                        val_ratio=float(config.TCN_VAL_SPLIT),
+                    )
+                built_seqs[chosen_fs] = {
+                    'X_tr': X_tr_t, 'y_tr': y_tr_t,
+                    'X_val': X_val_t, 'y_val': y_val_t,
+                    'keys_val': keys_val_t,
+                }
+                built_test[chosen_fs] = (X_te_t, y_te_t, keys_te_t_tmp)
+
+            tcn_feature_cols_used = tcn_feature_sets[chosen_fs]
+            fit_blk = built_seqs[chosen_fs]
+            X_te_t, y_te_t, keys_te_t = built_test[chosen_fs]
+
+            if best_hp_t is not None:
+                model_t = train_tcn(
+                    fit_blk['X_tr'], fit_blk['y_tr'],
+                    fit_blk['X_val'], fit_blk['y_val'],
+                    device,
+                    seed=fold_seed_base + 50,
+                    fold_idx=fold['fold'],
+                    optimizer_name=best_hp_t['optimizer'],
+                    learning_rate=best_hp_t['lr'],
+                    batch_size=best_hp_t['batch_size'],
+                    num_channels=best_hp_t['num_channels'],
+                    kernel_size=best_hp_t['kernel_size'],
+                    dropout=best_hp_t['dropout'],
+                )
+            else:
+                model_t = train_tcn(
+                    fit_blk['X_tr'], fit_blk['y_tr'],
+                    fit_blk['X_val'], fit_blk['y_val'],
+                    device,
+                    seed=fold_seed_base + 50,
+                    fold_idx=fold['fold'],
+                )
+            print(f'  [TCN]   fit done in {time.time()-t0:.1f}s')
+
+            probs_t = predict_tcn(model_t, X_te_t, device)
+
+            # ── TCN permutation importance (mirrors LSTM) ──────────────────
+            if len(X_te_t) > 0:
+                baseline_auc_t = binary_auc_safe(y_te_t, probs_t, log_on_fail=False)
+                if not np.isnan(baseline_auc_t):
+                    n_tcn_feats = X_te_t.shape[2]
+                    perm_drops_t = np.zeros(n_tcn_feats)
+                    rng_perm_t = np.random.default_rng(config.RANDOM_SEED + fold['fold'] + 7)
+                    for f_idx in range(n_tcn_feats):
+                        X_perm = X_te_t.copy()
+                        X_perm[:, :, f_idx] = rng_perm_t.permutation(X_perm[:, :, f_idx])
+                        probs_perm_t = predict_tcn(model_t, X_perm, device)
+                        perm_auc_t = binary_auc_safe(y_te_t, probs_perm_t, log_on_fail=False)
+                        drop = baseline_auc_t - (
+                            perm_auc_t if not np.isnan(perm_auc_t) else baseline_auc_t
+                        )
+                        perm_drops_t[f_idx] = max(drop, 0.0)
+                    perm_norm_t = perm_drops_t / (perm_drops_t.sum() + 1e-12)
+                    for f_idx, feat in enumerate(tcn_feature_cols_used):
+                        tcn_perm_records.append({
+                            'Fold': fold['fold'],
+                            'Feature': feat,
+                            'TCN_perm': float(perm_norm_t[f_idx]),
+                        })
+
+            del model_t, built_seqs, built_test
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        else:
+            print('\n  [TCN]       Skipping TCN (RUN_TCNS=False)')
+
         # ── Collect predictions for this fold ────────────────────────────────
         pred = df_ts.copy().reset_index(drop=True)
         pred['Prob_LR'] = lr_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
         pred['Prob_RF'] = rf_m.predict_proba(X_ts_b_s)[:, 1] if RUN_BASELINES else np.nan
         pred['Prob_XGB'] = xgb_m.predict(xgb.DMatrix(X_ts_b_s)) if RUN_BASELINES else np.nan
         pred['Prob_LSTM_B'] = align_predictions_to_df(probs_b, keys_te_b, df_ts) if RUN_LSTMS else np.nan
+        pred['Prob_TCN'] = align_predictions_to_df(probs_t, keys_te_t, df_ts) if RUN_TCNS else np.nan
         pred['Fold'] = fold['fold']
 
         if RUN_BASELINES:
@@ -740,7 +997,8 @@ def run_walk_forward_pipeline(
 
         # Report coverage
         n_lstm_b = pred['Prob_LSTM_B'].notna().sum()
-        print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM={n_lstm_b}')
+        n_tcn = pred['Prob_TCN'].notna().sum()
+        print(f'  Predictions: LR/RF/XGB={len(pred)}, LSTM={n_lstm_b}, TCN={n_tcn}')
 
         all_preds.append(pred)
 
@@ -755,7 +1013,16 @@ def run_walk_forward_pipeline(
         else:
             fi_per_fold['LSTM_B_perm'] = np.nan
 
-        imp_cols = ['LR_coef', 'RF_importance', 'XGB_gain', 'LSTM_B_perm']
+        # Merge TCN permutation importance. TCN may use a subset of features
+        # (e.g. 'core' set from tuning), so NaN is expected for features absent
+        # from the chosen set on a given fold.
+        if tcn_perm_records:
+            tcn_df = pd.DataFrame(tcn_perm_records)
+            fi_per_fold = fi_per_fold.merge(tcn_df, on=['Fold', 'Feature'], how='left')
+        else:
+            fi_per_fold['TCN_perm'] = np.nan
+
+        imp_cols = ['LR_coef', 'RF_importance', 'XGB_gain', 'LSTM_B_perm', 'TCN_perm']
         fi_per_fold.to_csv(
             f'{reports_dir}/{config.UNIVERSE_MODE}_feature_importances_per_fold.csv',
             index=False,
@@ -777,6 +1044,7 @@ def run_walk_forward_pipeline(
     full_preds = pd.concat(all_preds).reset_index(drop=True)
     print(f'\nTotal predictions: {len(full_preds)}')
     print(f'  LSTM valid: {full_preds["Prob_LSTM_B"].notna().sum()}')
+    print(f'  TCN  valid: {full_preds["Prob_TCN"].notna().sum()}')
 
     # ── Backtest each model independently ─────────────────────────────────────
     print('\n' + '=' * 60)
@@ -788,6 +1056,7 @@ def run_walk_forward_pipeline(
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
         'LSTM': 'Prob_LSTM_B',
+        'TCN': 'Prob_TCN',
     }
 
     port_returns_gross = {}
@@ -928,9 +1197,27 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Ensemble model (LR + LSTM only: RF and XGBoost have negative Sharpe) ──
+    # ── Ensemble (LR + LSTM [+ TCN if qualifying]): RF/XGBoost excluded (negative Sharpe) ──
+    # TCN inclusion requires the same performance gate used to exclude RF/XGBoost:
+    # only added when its actual out-of-sample net Sharpe is positive.
     _ens_base_cols = ['Prob_LR', 'Prob_LSTM_B']
-    _ens_avail = [c for c in _ens_base_cols if c in full_preds.columns]
+    if getattr(_UNIVERSE_CFG, 'include_tcn_in_ensemble', True) and RUN_TCNS:
+        _tcn_net_sharpe = (
+            compute_metrics(port_returns_net_5['TCN']['Net_Return'])['Sharpe Ratio']
+            if 'TCN' in port_returns_net_5 else None
+        )
+        if _tcn_net_sharpe is not None and _tcn_net_sharpe > 0.0:
+            _ens_base_cols.append('Prob_TCN')
+            print(f'  [Ensemble gate] TCN included (net Sharpe={_tcn_net_sharpe:.3f})')
+        elif _tcn_net_sharpe is not None:
+            print(
+                f'  [Ensemble gate] TCN excluded (net Sharpe={_tcn_net_sharpe:.3f} <= 0; '
+                f'mirrors RF/XGBoost exclusion logic)'
+            )
+    _ens_avail = [
+        c for c in _ens_base_cols
+        if c in full_preds.columns and full_preds[c].notna().any()
+    ]
     if _ens_avail:
         ens_preds = full_preds.dropna(subset=_ens_avail).copy()
         ens_preds['Prob_ENS'] = ens_preds[_ens_avail].mean(axis=1)

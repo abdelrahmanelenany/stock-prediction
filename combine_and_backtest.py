@@ -7,7 +7,7 @@ from config import LARGE_CAP_CONFIG, SMALL_CAP_CONFIG
 from backtest.signals import generate_signals, smooth_probabilities, apply_holding_period_constraint, compute_turnover_and_holding_stats
 from backtest.portfolio import compute_portfolio_returns
 from backtest.metrics import compute_metrics, evaluate_classification, compute_daily_auc
-from evaluation.metrics_utils import compute_subperiod_metrics
+from backtest.metrics import compute_subperiod_metrics
 from main import save_all_results
 
 # Mirror main.py: respect invert_signals so classification metrics match trading direction.
@@ -24,12 +24,15 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     print("Combining predictions...")
     full_preds = base_df.copy()
     full_preds['Prob_LSTM_B'] = lstm_df['Prob_LSTM_B']
+    if 'Prob_TCN' in lstm_df.columns:
+        full_preds['Prob_TCN'] = lstm_df['Prob_TCN']
 
     model_cols = {
         'LR': 'Prob_LR',
         'RF': 'Prob_RF',
         'XGBoost': 'Prob_XGB',
         'LSTM': 'Prob_LSTM_B',
+        'TCN': 'Prob_TCN',
     }
 
     port_returns_gross = {}
@@ -109,9 +112,10 @@ def run_combined_backtest(baseline_preds_path: str, lstm_preds_path: str, report
     results_net_5 = [compute_metrics(port_returns_net_5[m]['Net_Return']) | {'Model': m} for m in port_returns_net_5]
     
     subperiod_metrics = None
-    if 'LSTM' in port_returns_net_5:
+    _sp_model = next((m for m in ['LSTM', 'TCN', 'LR'] if m in port_returns_net_5), None)
+    if _sp_model:
         try:
-            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5['LSTM']['Net_Return'])
+            subperiod_metrics = compute_subperiod_metrics(port_returns_net_5[_sp_model]['Net_Return'])
         except Exception as e:
             print(f'Warning: Could not compute subperiod metrics: {e}')
 
