@@ -503,6 +503,9 @@ def train_tcn(
     best-validation-AUC epoch weights loaded.
     """
     _clear_mps_cache()
+    # MPS Conv1d is non-deterministic even with seeding; override to CPU for reproducibility.
+    if getattr(config, 'TCN_FORCE_CPU', False):
+        device = torch.device('cpu')
     train_seed = config.RANDOM_SEED if seed is None else int(seed)
     _seed_everything(train_seed)
 
@@ -589,6 +592,8 @@ def _run_tcn_replicates(
 ) -> list[float]:
     """Run `n_replicates` independent training runs for one hyperparameter tuple;
     return a list of best-val-AUC scores. Mirrors _run_tuning_replicates for LSTM."""
+    if getattr(config, 'TCN_FORCE_CPU', False):
+        device = torch.device('cpu')
     auc_scores: list[float] = []
     train_ds = TensorDataset(torch.FloatTensor(X_train), torch.LongTensor(y_train))
     val_ds = TensorDataset(torch.FloatTensor(X_val), torch.LongTensor(y_val))

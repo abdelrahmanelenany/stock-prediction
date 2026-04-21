@@ -374,6 +374,8 @@ TCN_DROPOUT         = 0.2
 TCN_LABEL_SMOOTHING = 0.1            # Prevents overconfident predictions; improves probability spread
 TCN_USE_WEIGHT_NORM = False  # Disabled: weight_norm causes MPS non-determinism and breaks
                               # kaiming init (computed weight attr is overwritten each fwd)
+TCN_FORCE_CPU = True          # Force CPU training: MPS Conv1d is non-deterministic even with
+                              # seeding; CPU is fully deterministic and fast enough for this model
 
 TCN_OPTIMIZER   = "adam"
 TCN_LR          = 1e-3
