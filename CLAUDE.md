@@ -17,7 +17,7 @@ by default). All performance is reported net of transaction costs.
 
 **Two universe modes:**
 - `large_cap`: 50 S&P 500 large caps balanced across 5 sectors (Tech, Finance, Healthcare, Consumer, Industrial)
-- `small_cap`: 30 true small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
+- `small_cap`: 50 true small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
 
 **Target hardware:** MacBook Air M4 (CPU / MPS backend for PyTorch).
 

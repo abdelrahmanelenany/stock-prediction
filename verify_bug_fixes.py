@@ -49,55 +49,7 @@ check(
 )
 
 # ---------------------------------------------------------------------------
-# 3. Wavelet denoising per-fold (no look-ahead)
-#    Check two things: (a) USE_WAVELET_DENOISING flag,
-#                      (b) the denoising function uses causal rolling window
-# ---------------------------------------------------------------------------
-use_wavelet = getattr(config, "USE_WAVELET_DENOISING", None)
-
-# Check whether main.py / combine_and_backtest.py applies denoising inside the fold loop
-main_path = os.path.join(ROOT, "main.py")
-combine_path = os.path.join(ROOT, "combine_and_backtest.py")
-
-def contains_causal_check(filepath):
-    """True if file applies wavelet denoising inside a fold loop."""
-    if not os.path.exists(filepath):
-        return False, "file not found"
-    with open(filepath) as f:
-        src = f.read()
-    has_wv_call = ("apply_wavelet_denoising" in src or
-                   "denoise_close_price" in src or
-                   "wavelet" in src.lower())
-    has_loop    = "for fold" in src or "for i, fold" in src
-    return has_wv_call and has_loop, src[:200]
-
-causal_main,    _ = contains_causal_check(main_path)
-causal_combine, _ = contains_causal_check(combine_path)
-
-# Also check the denoising implementation in features.py
-feat_path = os.path.join(ROOT, "pipeline", "features.py")
-causal_impl = False
-if os.path.exists(feat_path):
-    with open(feat_path) as f:
-        feat_src = f.read()
-    # Causal implementation: uses rolling window, not whole-series
-    causal_impl = ("for t in range" in feat_src and
-                   "window_size" in feat_src and
-                   "reconstructed[-1]" in feat_src)
-
-note_wavelet = (
-    f"USE_WAVELET_DENOISING={use_wavelet}; "
-    f"per-fold application found={'yes' if (causal_main or causal_combine) else 'not detected'}; "
-    f"causal rolling-window impl={'yes' if causal_impl else 'not detected'}"
-)
-check(
-    "Wavelet denoising is causal (rolling window) and applied per-fold",
-    causal_impl,   # core correctness check: implementation is causal
-    note_wavelet,
-)
-
-# ---------------------------------------------------------------------------
-# 4. LSTM scaler fitted on train only (not train+val)
+# 3. LSTM scaler fitted on train only (not train+val)
 # ---------------------------------------------------------------------------
 lstm_path = os.path.join(ROOT, "models", "lstm_model.py")
 main_path = os.path.join(ROOT, "main.py")

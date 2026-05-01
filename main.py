@@ -31,17 +31,14 @@ logging.basicConfig(
 logger = logging.getLogger('pipeline')
 
 from pipeline.data_loader import download_and_save
-from pipeline.features import (
-    build_feature_matrix, FEATURE_COLS,
-    compute_wavelet_thresholds, apply_wavelet_denoising, apply_wavelet_denoising_causal,
-    recompute_features_from_denoised,
-)
+from pipeline.features import build_feature_matrix, FEATURE_COLS
 from pipeline.targets import create_targets
 from pipeline.walk_forward import generate_walk_forward_folds, print_fold_summary
 from pipeline.standardizer import standardize_fold, winsorize_fold
 from pipeline.fold_reporting import save_fold_report
 from evaluation.metrics_utils import binary_auc_safe, classification_sanity_checks, log_split_balance
 from models.baselines import train_logistic, train_random_forest, train_xgboost, extract_feature_importances
+from models.calibration import ProbabilityCalibrator
 from models.lstm_model import (
     prepare_lstm_b_sequences_temporal_split,
     train_lstm_b,
@@ -450,56 +447,6 @@ def run_walk_forward_pipeline(
               f'Val: {len(df_v):>5} rows | '
               f'Test: {len(df_ts):>5} rows')
 
-        # ── Per-fold wavelet denoising (CAUSAL - NO LEAKAGE) ─────────────────────
-        # 1. Threshold computed from training data only
-        # 2. CAUSAL denoising: each value uses only historical data (rolling window)
-        # 3. Apply to each split INDEPENDENTLY (no concatenation)
-        # 4. CRITICAL: Do NOT recompute Target - it must remain based on raw returns
-        if config.USE_WAVELET_DENOISING:
-            print('  [Wavelet] Computing thresholds from training data...')
-            wavelet_thresholds = compute_wavelet_thresholds(df_tr)
-
-            # Apply CAUSAL denoising to each split INDEPENDENTLY
-            # This prevents future data from leaking into training
-            print('  [Wavelet] Applying causal denoising per split...')
-            df_tr = apply_wavelet_denoising_causal(df_tr, thresholds=wavelet_thresholds)
-            df_v = apply_wavelet_denoising_causal(df_v, thresholds=wavelet_thresholds)
-            df_ts = apply_wavelet_denoising_causal(df_ts, thresholds=wavelet_thresholds)
-
-            # Recompute Close-dependent FEATURES only (RSI, MACD, BB, etc.)
-            # CRITICAL: Do NOT recompute Return_NextDay or Target - they must
-            # remain based on RAW realized returns for honest evaluation
-            print('  [Wavelet] Recomputing features from denoised Close...')
-
-            # Save original targets before feature recomputation
-            tr_target = df_tr['Target'].copy()
-            tr_return_next = df_tr['Return_NextDay'].copy()
-            v_target = df_v['Target'].copy()
-            v_return_next = df_v['Return_NextDay'].copy()
-            ts_target = df_ts['Target'].copy()
-            ts_return_next = df_ts['Return_NextDay'].copy()
-
-            # Recompute features from denoised Close
-            df_tr = recompute_features_from_denoised(df_tr)
-            df_v = recompute_features_from_denoised(df_v)
-            df_ts = recompute_features_from_denoised(df_ts)
-
-            # Restore original targets (based on raw returns, not denoised)
-            df_tr['Target'] = tr_target.values
-            df_tr['Return_NextDay'] = tr_return_next.values
-            df_v['Target'] = v_target.values
-            df_v['Return_NextDay'] = v_return_next.values
-            df_ts['Target'] = ts_target.values
-            df_ts['Return_NextDay'] = ts_return_next.values
-
-            # Drop rows with NaN from warm-up period after recomputation
-            df_tr = df_tr.dropna(subset=FEATURE_COLS).reset_index(drop=True)
-            df_v = df_v.dropna(subset=FEATURE_COLS).reset_index(drop=True)
-            df_ts = df_ts.dropna(subset=FEATURE_COLS).reset_index(drop=True)
-
-            print(f'  [Wavelet] After denoising: Train={len(df_tr)}, '
-                  f'Val={len(df_v)}, Test={len(df_ts)}')
-
         y_tr = df_tr[TARGET_COL].values.astype(int)
         y_v = df_v[TARGET_COL].values.astype(int)
         y_ts = df_ts[TARGET_COL].values.astype(int)
@@ -697,6 +644,23 @@ def run_walk_forward_pipeline(
 
             # LSTM inference
             probs_b = predict_lstm(model_b, X_te_b, device)
+
+            # ── Calibrate LSTM probabilities (fit on val, apply to test) ───
+            # Corrects logit-saturation overconfidence (raw prob std ~0.34 vs ~0.05-0.09
+            # for baselines). Isotonic regression is rank-preserving so AUC is unchanged;
+            # it re-maps extreme probs toward the empirical label frequencies.
+            if getattr(config, 'LSTM_CALIBRATE_PROBS', True):
+                _lstm_val_probs = predict_lstm(model_b, X_val_b, device)
+                _lstm_cal = ProbabilityCalibrator(
+                    method=getattr(config, 'CALIBRATION_METHOD', 'isotonic')
+                )
+                _lstm_cal.fit(_lstm_val_probs, y_val_b)
+                _std_before = float(np.nanstd(probs_b))
+                probs_b = _lstm_cal.transform(probs_b)
+                print(
+                    f'  [LSTM] calibration: prob std {_std_before:.4f} → '
+                    f'{float(np.nanstd(probs_b)):.4f}'
+                )
 
             # ── LSTM permutation importance (Task 5) ───────────────────────
             baseline_auc = binary_auc_safe(y_te_b, probs_b, log_on_fail=False)
@@ -934,6 +898,20 @@ def run_walk_forward_pipeline(
             print(f'  [TCN]   fit done in {time.time()-t0:.1f}s')
 
             probs_t = predict_tcn(model_t, X_te_t, device)
+
+            # ── Calibrate TCN probabilities (fit on val, apply to test) ────
+            if getattr(config, 'TCN_CALIBRATE_PROBS', True):
+                _tcn_val_probs = predict_tcn(model_t, fit_blk['X_val'], device)
+                _tcn_cal = ProbabilityCalibrator(
+                    method=getattr(config, 'CALIBRATION_METHOD', 'isotonic')
+                )
+                _tcn_cal.fit(_tcn_val_probs, fit_blk['y_val'])
+                _std_before_t = float(np.nanstd(probs_t))
+                probs_t = _tcn_cal.transform(probs_t)
+                print(
+                    f'  [TCN]  calibration: prob std {_std_before_t:.4f} → '
+                    f'{float(np.nanstd(probs_t)):.4f}'
+                )
 
             # ── TCN permutation importance (mirrors LSTM) ──────────────────
             if len(X_te_t) > 0:

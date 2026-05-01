@@ -12,8 +12,7 @@ class UniverseConfig:
     
     # Signal direction
     invert_signals: bool
-    invert_features: bool
-    
+
     # Sector computation
     sector_min_size: int
     sector_winsorize: bool
@@ -51,26 +50,26 @@ LARGE_CAP_TICKERS = [
 ]  # Total: 50
 
 
-# Small-cap: 30 TRUE small-cap stocks (Russell 2000 / S&P SmallCap 600 constituents)
+# Small-cap: 50 balanced small-cap stocks across 5 sectors (10 names each)
 # Market cap range: ~300M – 5B USD (actual small-cap territory)
 # Better reflects size-factor effects vs S&P 500 "pseudo small caps"
 
 SMALL_CAP_TICKERS = [
     # Technology / Growth
-    'SMCI', 'FSLY', 'AI', 'PLUG', 'RUN', 'ARRY',
-    
+    'SMCI', 'FSLY', 'AI', 'PLUG', 'RUN', 'ARRY', 'DOCN', 'INTA', 'BAND', 'U',
+
     # Healthcare / Biotech
-    'NVAX', 'ICPT', 'SRPT', 'BLUE', 'EXEL', 'IONS',
-    
+    'NVAX', 'SRPT', 'EXEL', 'IONS', 'HALO', 'ALKS', 'AUPH', 'PACB', 'MRNA', 'BCRX',
+
     # Consumer / Retail
-    'GME', 'BOOT', 'CROX', 'SHOO', 'CAL', 'MOV',
-    
+    'GME', 'BOOT', 'CROX', 'SHOO', 'CAL', 'MOV', 'GAP', 'AEO', 'LEVI', 'SHAK',
+
     # Industrials / Manufacturing
-    'AA', 'CLF', 'X', 'ATI', 'WCC', 'LPX',
-    
+    'AA', 'CLF', 'ATI', 'WCC', 'LPX', 'CMC', 'GXO', 'XPO', 'HWM', 'TRN',
+
     # Financials / REITs
-    'FHN', 'ZION', 'CMA', 'PACW', 'NYCB', 'STWD'
-]  # Total: 30
+    'FHN', 'ZION', 'STWD', 'OZK', 'WAL', 'FNB', 'EWBC', 'CACC', 'SF', 'PNFP'
+]  # Total: 50
 
 # Active ticker list — set by UNIVERSE_MODE
 if UNIVERSE_MODE == "large_cap":
@@ -94,23 +93,28 @@ LARGE_CAP_SECTOR_MAP = {
 
 SMALL_CAP_SECTOR_MAP = {
     # Tech / Growth
-    'SMCI': 'Tech', 'FSLY': 'Tech', 'AI': 'Tech', 'PLUG': 'Tech', 'RUN': 'Tech', 'ARRY': 'Tech',
+    'SMCI': 'Tech', 'FSLY': 'Tech', 'AI': 'Tech', 'PLUG': 'Tech', 'RUN': 'Tech',
+    'ARRY': 'Tech', 'DOCN': 'Tech', 'INTA': 'Tech', 'BAND': 'Tech', 'U': 'Tech',
 
     # Healthcare / Biotech
-    'NVAX': 'Healthcare', 'ICPT': 'Healthcare', 'SRPT': 'Healthcare', 'BLUE': 'Healthcare',
-    'EXEL': 'Healthcare', 'IONS': 'Healthcare',
+    'NVAX': 'Healthcare', 'SRPT': 'Healthcare', 'EXEL': 'Healthcare', 'IONS': 'Healthcare',
+    'HALO': 'Healthcare', 'ALKS': 'Healthcare', 'AUPH': 'Healthcare', 'PACB': 'Healthcare',
+    'MRNA': 'Healthcare', 'BCRX': 'Healthcare',
 
     # Consumer / Retail
     'GME': 'Consumer', 'BOOT': 'Consumer', 'CROX': 'Consumer', 'SHOO': 'Consumer',
-    'CAL': 'Consumer', 'MOV': 'Consumer',
+    'CAL': 'Consumer', 'MOV': 'Consumer', 'GAP': 'Consumer', 'AEO': 'Consumer',
+    'LEVI': 'Consumer', 'SHAK': 'Consumer',
 
     # Industrials / Manufacturing
-    'AA': 'Industrial', 'CLF': 'Industrial', 'X': 'Industrial', 'ATI': 'Industrial',
-    'WCC': 'Industrial', 'LPX': 'Industrial',
+    'AA': 'Industrial', 'CLF': 'Industrial', 'ATI': 'Industrial', 'WCC': 'Industrial',
+    'LPX': 'Industrial', 'CMC': 'Industrial', 'GXO': 'Industrial', 'XPO': 'Industrial',
+    'HWM': 'Industrial', 'TRN': 'Industrial',
 
     # Financials
-    'FHN': 'Finance', 'ZION': 'Finance', 'CMA': 'Finance', 'PACW': 'Finance',
-    'NYCB': 'Finance', 'STWD': 'Finance',
+    'FHN': 'Finance', 'ZION': 'Finance', 'STWD': 'Finance', 'OZK': 'Finance',
+    'WAL': 'Finance', 'FNB': 'Finance', 'EWBC': 'Finance', 'CACC': 'Finance',
+    'SF': 'Finance', 'PNFP': 'Finance',
 }
 
 # Dynamically select sector map and tickers based on configuration
@@ -195,9 +199,7 @@ LSTM_SECTOR_FEATURES_ENABLED = True       # LSTM uses sector features
 # Master feature union: all features used by at least one model
 ALL_FEATURE_COLS = [
     "Return_1d",        # LSTM, Baselines
-    "NegReturn_1d",
     "Return_5d",        # LSTM, Baselines (weekly momentum)
-    "NegReturn_5d",
     "Return_21d",       # LSTM, Baselines (monthly momentum)
     "RSI_14",           # LSTM, Baselines
     "MACD",             # Baselines only
@@ -207,10 +209,6 @@ ALL_FEATURE_COLS = [
     "Volume_Ratio",     # LSTM, Baselines
     "SectorRelReturn",  # LSTM, Baselines
 ]
-
-for _col in ["NegReturn_1d", "NegReturn_5d", "RSI_Reversal", "NegMACD", "BB_Reversal"]:
-    if _col not in ALL_FEATURE_COLS:
-        ALL_FEATURE_COLS.append(_col)
 
 if MARKET_FEATURES_ENABLED:
     ALL_FEATURE_COLS.extend([
@@ -297,7 +295,7 @@ TC_BPS   = 5   # Transaction cost per half-turn in basis points (0.0005)
 TARGET_HORIZON_DAYS = 21
 
 SIGNAL_SMOOTH_ALPHA = 0.0
-SIGNAL_CONFIDENCE_THRESHOLD = 0.55  # z-score threshold: sit out when model has low conviction
+SIGNAL_CONFIDENCE_THRESHOLD = 0.0  # z-score threshold: sit out when model has low conviction
 SIGNAL_USE_ZSCORE = True  # Use cross-sectional z-score for more robust signal generation
 MIN_HOLDING_DAYS = 5
 
@@ -365,7 +363,7 @@ TCN_FEATURE_SETS = {
     "core_market":  TCN_FEATURE_COLS_CORE_MARKET,
     "full":         TCN_FEATURE_COLS_FULL,
 }
-TCN_FEATURE_SET_DEFAULT = "core_market"   # ablation winner: core + market features
+TCN_FEATURE_SET_DEFAULT = "full"   # same features as LSTM for fair architecture comparison
 
 TCN_SEQ_LEN         = SEQ_LEN
 TCN_NUM_CHANNELS    = [16, 16, 16]   # 3 levels x 16 filters; ~10k params ≈ LSTM's ~7k
@@ -398,7 +396,7 @@ TCN_ARCH_GRID = {                        # Phase 2 (architecture + feature set)
     "num_channels": [[16, 16, 16], [32, 32, 32], [32, 32, 32, 32]],
     "kernel_size":  [3, 5],
     "dropout":      [0.1, 0.2, 0.3],
-    "feature_set":  ["core", "full"],
+    "feature_set":  ["core_market", "full"],
 }
 TCN_TUNE_REPLICATES = 1
 TCN_TUNE_PATIENCE   = 4
@@ -409,13 +407,6 @@ TCN_SWEEP_KERNEL_GRID   = [2, 3, 5]
 TCN_SWEEP_LEVELS_GRID   = [3, 4, 5]
 TCN_SWEEP_CHANNEL_GRID  = [32, 64]
 TCN_SWEEP_MAX_EPOCHS    = 40
-
-# ── Wavelet Denoising (Bhandari §4.5) ────────────────────────────────────────
-USE_WAVELET_DENOISING = False    # Set False to use raw prices (Fixes OOS domain shift)
-WAVELET_TYPE          = "haar"  # Paper uses Haar wavelets
-WAVELET_LEVEL         = 1       # Decomposition level; 1 is appropriate for daily data
-WAVELET_MODE          = "soft"  # Thresholding mode: 'soft' (paper) or 'hard'
-WAVELET_WINDOW_SIZE   = 128     # Lookback window for causal denoising (prevents leakage)
 
 # ── Normalization (Bhandari §4.5 uses MinMax; our default is Standard) ───────
 SCALER_TYPE = "standard"   # Options: "standard" (default) | "minmax"
@@ -448,6 +439,14 @@ XGB_REG_LAMBDA   = 1.0    # L2 regularization
 
 RANDOM_SEED = 42
 
+# ── Probability calibration ───────────────────────────────────────────────────
+# Fit isotonic regression on val-set predictions each fold, then transform test
+# predictions. Corrects the LSTM's logit-saturation overconfidence (prob std ~0.34)
+# to a well-calibrated range comparable to other models.
+LSTM_CALIBRATE_PROBS = False    # calibrate LSTM test probabilities per fold
+TCN_CALIBRATE_PROBS  = False    # calibrate TCN test probabilities per fold
+CALIBRATION_METHOD   = 'isotonic'  # 'isotonic' (rank-preserving) or 'platt'
+
 # ── Model registry ────────────────────────────────────────────────────────────
 MODELS = ['LR', 'RF', 'XGBoost', 'LSTM', 'TCN']
 
@@ -457,7 +456,6 @@ LARGE_CAP_CONFIG = UniverseConfig(
     baseline_feature_cols=BASELINE_FEATURE_COLS,
     lstm_b_feature_cols=LSTM_B_FEATURE_COLS,
     invert_signals=True,
-    invert_features=False,
     sector_min_size=3,
     sector_winsorize=True,
     sector_winsorize_pct=0.05,
@@ -472,7 +470,6 @@ SMALL_CAP_CONFIG = UniverseConfig(
     baseline_feature_cols=BASELINE_FEATURE_COLS,   # existing, momentum-flavored
     lstm_b_feature_cols=LSTM_B_FEATURE_COLS,       # existing
     invert_signals=False,
-    invert_features=False,
     sector_min_size=3,
     sector_winsorize=False,   # preserve extreme signals in small-cap
     sector_winsorize_pct=0.0,
