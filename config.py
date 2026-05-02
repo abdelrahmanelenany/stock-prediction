@@ -33,7 +33,7 @@ class UniverseConfig:
 # =============================================================================
 # 0. UNIVERSE MODE — toggle between large-cap and small-cap
 # =============================================================================
-UNIVERSE_MODE = "large_cap"   # Options: "large_cap" | "small_cap"
+UNIVERSE_MODE = "small_cap"   # Options: "large_cap" | "small_cap"
 
 # Large-cap: 50 S&P 500 large caps balanced across 5 sectors
 LARGE_CAP_TICKERS = [

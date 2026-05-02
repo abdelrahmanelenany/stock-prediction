@@ -1113,6 +1113,23 @@ def run_walk_forward_pipeline(
         port_returns_gross[model_name] = port_gross
         port_returns_net_5[model_name] = port_net_5
 
+        # Fold-level Sharpe (gross) — one row per fold per model
+        date_fold = (
+            valid_preds[['Date', 'Fold']].drop_duplicates()
+            .set_index('Date')['Fold']
+        )
+        port_gross_folds = port_gross.join(date_fold, how='left')
+        for fold_id, fold_grp in port_gross_folds.groupby('Fold'):
+            fm = compute_metrics(fold_grp['Gross_Return'])
+            fold_sharpe_rows.append({
+                'Model':              model_name,
+                'Fold':               int(fold_id),
+                'Sharpe Ratio (Gross)': round(fm.get('Sharpe Ratio', float('nan')), 3),
+                'N Days':             len(fold_grp),
+                'Start Date':         fold_grp.index.min().date(),
+                'End Date':           fold_grp.index.max().date(),
+            })
+
         # Store daily returns for export
         if daily_returns_gross['Date'] is None:
             daily_returns_gross['Date'] = port_gross.index
@@ -1254,15 +1271,20 @@ def run_walk_forward_pipeline(
     else:
         print('\n  [Ensemble] skipped — no base model predictions available')
 
-    # ── Sub-period analysis (LSTM as primary model) ─────────────────────────
+    # ── Sub-period analysis (all models) ────────────────────────────────────
     subperiod_metrics = None
-    if 'LSTM' in port_returns_net_5:
-        try:
-            subperiod_metrics = compute_subperiod_metrics(
-                port_returns_net_5['LSTM']['Net_Return']
-            )
-        except Exception as e:
-            print(f'Warning: Could not compute sub-period metrics: {e}')
+    try:
+        sp_frames = []
+        for _sp_model, _sp_port in port_returns_net_5.items():
+            _sp_df = compute_subperiod_metrics(_sp_port['Net_Return'])
+            _sp_df.insert(0, 'Period', _sp_df.index)
+            _sp_df.insert(0, 'Model', _sp_model)
+            _sp_df = _sp_df.reset_index(drop=True)
+            sp_frames.append(_sp_df)
+        if sp_frames:
+            subperiod_metrics = pd.concat(sp_frames, ignore_index=True)
+    except Exception as e:
+        print(f'Warning: Could not compute sub-period metrics: {e}')
 
     # ── Save all results ─────────────────────────────────────────────────────
     results_dict = {
