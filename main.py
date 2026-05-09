@@ -1342,4 +1342,4 @@ def main(load_cached: bool = True):
 
 
 if __name__ == '__main__':
-    main(load_cached=False)
+    main(load_cached=True)
