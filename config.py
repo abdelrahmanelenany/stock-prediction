@@ -347,14 +347,14 @@ LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True  # If True, tunes only on fold 0 and reuse
 #          Falls back to scratch tuning if the file does not exist.
 # False → tune normally (controlled by LSTM_B_ENABLE_TUNING / TCN_ENABLE_TUNING above).
 # The JSON is always written after a successful first-fold tune so it stays current.
-TUNE_USE_FROZEN_HPS = False
+TUNE_USE_FROZEN_HPS = True
 
 # Skip permutation importance computation for LSTM and TCN.
 # True  → compute per-fold permutation importance; saves feature importance CSVs.
 # False → skip; saves ~(n_features × 2 × n_folds) inference passes — useful for
 #         speed runs when importances are not needed.
 # Baseline importances (LR coefficients, RF MDI, XGBoost gain) are always saved.
-COMPUTE_PERMUTATION_IMPORTANCE = True
+COMPUTE_PERMUTATION_IMPORTANCE = False
 
 LSTM_B_HYPERPARAM_GRID = {
     "optimizer": ["adam", "nadam"],

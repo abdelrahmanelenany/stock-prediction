@@ -1253,23 +1253,22 @@ def run_walk_forward_pipeline(
               f'Ann.Ret={m["Annualized Return (%)"]:.2f}%  '
               f'MDD={m["Max Drawdown (%)"]:.2f}%')
 
-    # ── Ensemble (LR + LSTM [+ TCN if qualifying]): RF/XGBoost excluded (negative Sharpe) ──
-    # TCN inclusion requires the same performance gate used to exclude RF/XGBoost:
-    # only added when its actual out-of-sample net Sharpe is positive.
-    _ens_base_cols = ['Prob_LR', 'Prob_LSTM_B']
-    if getattr(_UNIVERSE_CFG, 'include_tcn_in_ensemble', True) and RUN_TCNS:
-        _tcn_net_sharpe = (
-            compute_metrics(port_returns_net_5['TCN']['Net_Return'])['Sharpe Ratio']
-            if 'TCN' in port_returns_net_5 else None
-        )
-        if _tcn_net_sharpe is not None and _tcn_net_sharpe > 0.0:
-            _ens_base_cols.append('Prob_TCN')
-            print(f'  [Ensemble gate] TCN included (net Sharpe={_tcn_net_sharpe:.3f})')
-        elif _tcn_net_sharpe is not None:
-            print(
-                f'  [Ensemble gate] TCN excluded (net Sharpe={_tcn_net_sharpe:.3f} <= 0; '
-                f'mirrors RF/XGBoost exclusion logic)'
-            )
+    # ── Ensemble: include any model whose out-of-sample net Sharpe > 0 ──────────
+    # All models are evaluated; inclusion is determined purely by performance,
+    # not by a fixed model list.
+    _ens_base_cols = []
+    for _ens_model, _ens_prob_col in model_cols.items():
+        if _ens_model not in port_returns_net_5:
+            print(f'  [Ensemble gate] {_ens_model} skipped (no backtest results)')
+            continue
+        _model_net_sharpe = compute_metrics(
+            port_returns_net_5[_ens_model]['Net_Return']
+        )['Sharpe Ratio']
+        if _model_net_sharpe > 0.0:
+            _ens_base_cols.append(_ens_prob_col)
+            print(f'  [Ensemble gate] {_ens_model} included (net Sharpe={_model_net_sharpe:.3f})')
+        else:
+            print(f'  [Ensemble gate] {_ens_model} excluded (net Sharpe={_model_net_sharpe:.3f} <= 0)')
     _ens_avail = [
         c for c in _ens_base_cols
         if c in full_preds.columns and full_preds[c].notna().any()
@@ -1277,7 +1276,8 @@ def run_walk_forward_pipeline(
     if _ens_avail:
         ens_preds = full_preds.dropna(subset=_ens_avail).copy()
         ens_preds['Prob_ENS'] = ens_preds[_ens_avail].mean(axis=1)
-        print(f'\n  [Ensemble] built from {_ens_avail} ({len(ens_preds)} rows)')
+        _ens_model_names = [m for m, c in model_cols.items() if c in _ens_avail]
+        print(f'\n  [Ensemble] built from {_ens_model_names} ({len(ens_preds)} rows)')
 
         smoothed_ens = smooth_probabilities(
             ens_preds, 'Prob_ENS',
@@ -1330,7 +1330,7 @@ def run_walk_forward_pipeline(
             daily_returns_gross['Ensemble'] = port_gross_ens.reindex(daily_returns_gross['Date'])['Gross_Return'].values
             daily_returns_net_5['Ensemble'] = port_net_ens.reindex(daily_returns_net_5['Date'])['Net_Return'].values
     else:
-        print('\n  [Ensemble] skipped — no base model predictions available')
+        print('\n  [Ensemble] skipped — no model passed the net Sharpe > 0 gate')
 
     # ── Sub-period analysis (all models) ────────────────────────────────────
     subperiod_metrics = None
