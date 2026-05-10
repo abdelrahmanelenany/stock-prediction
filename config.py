@@ -202,8 +202,8 @@ ALL_FEATURE_COLS = [
     "Return_5d",        # LSTM, Baselines (weekly momentum)
     "Return_21d",       # LSTM, Baselines (monthly momentum)
     "RSI_14",           # LSTM, Baselines
-    "MACD",             # Baselines only
-    "ATR_14",           # Baselines only
+    "MACD",
+    "ATR_14",
     "BB_PctB",          # LSTM, Baselines
     "RealVol_20d",      # LSTM, Baselines
     "Volume_Ratio",     # LSTM, Baselines
@@ -337,6 +337,21 @@ LSTM_TUNE_MAX_EPOCHS = 50     # cap tuning runs; full training uses MAX_EPOCHS
 # LSTM focused tuning controls (bounded search to keep wall-time manageable)
 LSTM_B_ENABLE_TUNING = True
 LSTM_B_TUNE_ON_FIRST_FOLD_ONLY = True  # If True, tunes only on fold 0 and reuses best hyperparams for all folds
+
+# Load pre-saved hyperparameters instead of tuning from scratch.
+# True  → read reports/{universe}_tuned_hyperparams.json and skip tuning entirely.
+#          Falls back to scratch tuning if the file does not exist.
+# False → tune normally (controlled by LSTM_B_ENABLE_TUNING / TCN_ENABLE_TUNING above).
+# The JSON is always written after a successful first-fold tune so it stays current.
+TUNE_USE_FROZEN_HPS = False
+
+# Skip permutation importance computation for LSTM and TCN.
+# True  → compute per-fold permutation importance; saves feature importance CSVs.
+# False → skip; saves ~(n_features × 2 × n_folds) inference passes — useful for
+#         speed runs when importances are not needed.
+# Baseline importances (LR coefficients, RF MDI, XGBoost gain) are always saved.
+COMPUTE_PERMUTATION_IMPORTANCE = False
+
 LSTM_B_HYPERPARAM_GRID = {
     "optimizer": ["adam", "nadam"],
     "learning_rate": [0.0003, 0.001, 0.003],
@@ -363,7 +378,7 @@ TCN_FEATURE_SETS = {
     "core_market":  TCN_FEATURE_COLS_CORE_MARKET,
     "full":         TCN_FEATURE_COLS_FULL,
 }
-TCN_FEATURE_SET_DEFAULT = "full"   # same features as LSTM for fair architecture comparison
+TCN_FEATURE_SET_DEFAULT = "core_market"   # same features as LSTM for fair architecture comparison
 
 TCN_SEQ_LEN         = SEQ_LEN
 TCN_NUM_CHANNELS    = [16, 16, 16]   # 3 levels x 16 filters; ~10k params ≈ LSTM's ~7k

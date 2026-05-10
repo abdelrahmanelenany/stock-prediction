@@ -33,3 +33,7 @@ figures/F16_feature_importance.pdf
 figures/F16_feature_importance.png
 figures/F15_tcn_arch_sweep.pdf
 figures/F15_tcn_arch_sweep.png
+figures/F12_ablation_feature_layer.pdf
+.gitignore
+.gitignore
+figures/F12_ablation_feature_layer.png

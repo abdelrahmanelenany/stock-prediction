@@ -15,6 +15,7 @@ Run:
 import os
 os.environ['OMP_NUM_THREADS'] = '1'  # Prevent XGBoost/PyTorch dual-OpenMP segfault
 
+import json
 import time
 import random
 import logging
@@ -261,6 +262,63 @@ def run_walk_forward_pipeline(
     tcn_tuning_enabled = bool(getattr(config, 'TCN_ENABLE_TUNING', False))
     tcn_tune_once = bool(getattr(config, 'TCN_TUNE_ON_FIRST_FOLD_ONLY', True))
 
+    # ── Frozen hyperparameters (TUNE_USE_FROZEN_HPS) ────────────────────────
+    # Pre-populate best_hp_*_global from the saved JSON so the fold loop
+    # skips the tuning phase entirely and reuses the frozen architecture.
+    _frozen_hp_b_init = None   # will become best_hp_b_global before fold loop
+    _frozen_hp_t_init = None   # will become best_hp_t_global before fold loop
+    if getattr(config, 'TUNE_USE_FROZEN_HPS', False):
+        _frozen_path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_tuned_hyperparams.json')
+        if os.path.exists(_frozen_path):
+            with open(_frozen_path) as _fh:
+                _frozen = json.load(_fh)
+            _ABSENT = object()  # distinguishes missing key from JSON null
+            _lstm_frozen = _frozen.get('lstm', _ABSENT)
+            _tcn_frozen  = _frozen.get('tcn',  _ABSENT)
+            # dict  → use those specific HPs
+            # null  → default won tuning; use config defaults ('DEFAULT' sentinel)
+            # absent → not yet saved; leave tuning enabled for that model
+            if _lstm_frozen is not _ABSENT:
+                _frozen_hp_b_init     = _lstm_frozen if _lstm_frozen is not None else 'DEFAULT'
+                lstm_b_tuning_enabled = False
+            if _tcn_frozen is not _ABSENT:
+                _frozen_hp_t_init     = _tcn_frozen  if _tcn_frozen  is not None else 'DEFAULT'
+                tcn_tuning_enabled    = False
+            print(f'[Frozen HPs] Loaded from {_frozen_path}')
+            print(f'  LSTM : {_lstm_frozen if _lstm_frozen is not _ABSENT else "(not saved yet — will tune)"}')
+            print(f'  TCN  : {_tcn_frozen  if _tcn_frozen  is not _ABSENT else "(not saved yet — will tune)"}')
+        else:
+            print(
+                f'[WARNING] TUNE_USE_FROZEN_HPS=True but {_frozen_path} not found. '
+                'Falling back to scratch tuning.'
+            )
+
+    _HP_UNSET = object()  # sentinel: caller did not supply this model's HPs
+
+    def _save_frozen_hps(hp_b=_HP_UNSET, hp_t=_HP_UNSET):
+        """Write current best LSTM + TCN HPs to the frozen JSON (upsert).
+
+        Pass hp_b / hp_t as a dict (tuned params) or None (default won).
+        Omitting a keyword keeps that model's existing JSON entry untouched.
+        """
+        _path = os.path.join(reports_dir, f'{config.UNIVERSE_MODE}_tuned_hyperparams.json')
+        existing = {}
+        if os.path.exists(_path):
+            try:
+                with open(_path) as _fh:
+                    existing = json.load(_fh)
+            except Exception:
+                existing = {}
+        if hp_b is not _HP_UNSET:
+            existing['lstm'] = hp_b   # dict → tuned params; None → use config defaults
+        if hp_t is not _HP_UNSET:
+            existing['tcn'] = hp_t
+        existing['universe']  = config.UNIVERSE_MODE
+        existing['saved_at']  = time.strftime('%Y-%m-%dT%H:%M:%S')
+        with open(_path, 'w') as _fh:
+            json.dump(existing, _fh, indent=2)
+        print(f'    [Frozen HPs] Saved → {_path}')
+
     print("=" * 60)
     print("EXPERIMENT CONFIGURATION")
     print(f"  Universe mode : {config.UNIVERSE_MODE}")
@@ -423,8 +481,8 @@ def run_walk_forward_pipeline(
     # ── Steps 5-6: Train models per fold ────────────────────────────────────
     all_preds = []
     tuning_results = []  # Store tuning results for thesis reporting
-    best_hp_b_global = None  # dict for tuned params or string 'DEFAULT'
-    best_hp_t_global = None  # TCN tuned params (dict) or string 'DEFAULT'
+    best_hp_b_global = _frozen_hp_b_init   # pre-populated when TUNE_USE_FROZEN_HPS=True
+    best_hp_t_global = _frozen_hp_t_init   # pre-populated when TUNE_USE_FROZEN_HPS=True
     feat_imp_records = []       # Per-fold baseline importance accumulator (Task 5)
     lstm_perm_records = []      # Per-fold LSTM permutation importance accumulator
     tcn_perm_records = []       # Per-fold TCN permutation importance accumulator
@@ -611,6 +669,7 @@ def run_walk_forward_pipeline(
                 print(f'    [LSTM Tuning] Selected params: {best_hp_b}')
                 if lstm_b_tune_once:
                     best_hp_b_global = best_hp_b if best_hp_b is not None else 'DEFAULT'
+                    _save_frozen_hps(hp_b=best_hp_b)   # None saved as null = use config defaults
             elif best_hp_b_global is not None:
                 if best_hp_b_global == 'DEFAULT':
                     best_hp_b = None
@@ -663,26 +722,27 @@ def run_walk_forward_pipeline(
                 )
 
             # ── LSTM permutation importance (Task 5) ───────────────────────
-            baseline_auc = binary_auc_safe(y_te_b, probs_b, log_on_fail=False)
-            if not np.isnan(baseline_auc):
-                n_lstm_feats = X_te_b.shape[2]
-                perm_drops = np.zeros(n_lstm_feats)
-                rng_perm = np.random.default_rng(config.RANDOM_SEED + fold['fold'])
-                for f_idx in range(n_lstm_feats):
-                    X_perm = X_te_b.copy()
-                    # Shuffle this feature across all samples (axis 0), keep time axis intact
-                    X_perm[:, :, f_idx] = rng_perm.permutation(X_perm[:, :, f_idx])
-                    probs_perm = predict_lstm(model_b, X_perm, device)
-                    perm_auc = binary_auc_safe(y_te_b, probs_perm, log_on_fail=False)
-                    drop = baseline_auc - (perm_auc if not np.isnan(perm_auc) else baseline_auc)
-                    perm_drops[f_idx] = max(drop, 0.0)   # clip negatives: not informative
-                perm_norm = perm_drops / (perm_drops.sum() + 1e-12)
-                for f_idx, feat in enumerate(LSTM_B_FEATURES):
-                    lstm_perm_records.append({
-                        'Fold': fold['fold'],
-                        'Feature': feat,
-                        'LSTM_B_perm': float(perm_norm[f_idx]),
-                    })
+            if getattr(config, 'COMPUTE_PERMUTATION_IMPORTANCE', True):
+                baseline_auc = binary_auc_safe(y_te_b, probs_b, log_on_fail=False)
+                if not np.isnan(baseline_auc):
+                    n_lstm_feats = X_te_b.shape[2]
+                    perm_drops = np.zeros(n_lstm_feats)
+                    rng_perm = np.random.default_rng(config.RANDOM_SEED + fold['fold'])
+                    for f_idx in range(n_lstm_feats):
+                        X_perm = X_te_b.copy()
+                        # Shuffle this feature across all samples (axis 0), keep time axis intact
+                        X_perm[:, :, f_idx] = rng_perm.permutation(X_perm[:, :, f_idx])
+                        probs_perm = predict_lstm(model_b, X_perm, device)
+                        perm_auc = binary_auc_safe(y_te_b, probs_perm, log_on_fail=False)
+                        drop = baseline_auc - (perm_auc if not np.isnan(perm_auc) else baseline_auc)
+                        perm_drops[f_idx] = max(drop, 0.0)   # clip negatives: not informative
+                    perm_norm = perm_drops / (perm_drops.sum() + 1e-12)
+                    for f_idx, feat in enumerate(LSTM_B_FEATURES):
+                        lstm_perm_records.append({
+                            'Fold': fold['fold'],
+                            'Feature': feat,
+                            'LSTM_B_perm': float(perm_norm[f_idx]),
+                        })
 
             # Free LSTM memory for next fold
             del model_b, X_te_b, y_te_b
@@ -839,6 +899,7 @@ def run_walk_forward_pipeline(
                 print(f'    [TCN Tuning] Selected params: {best_hp_t}')
                 if tcn_tune_once:
                     best_hp_t_global = best_hp_t if best_hp_t is not None else 'DEFAULT'
+                    _save_frozen_hps(hp_t=best_hp_t)   # None saved as null = use config defaults
             elif best_hp_t_global is not None:
                 if best_hp_t_global == 'DEFAULT':
                     best_hp_t = None
@@ -914,7 +975,7 @@ def run_walk_forward_pipeline(
                 )
 
             # ── TCN permutation importance (mirrors LSTM) ──────────────────
-            if len(X_te_t) > 0:
+            if getattr(config, 'COMPUTE_PERMUTATION_IMPORTANCE', True) and len(X_te_t) > 0:
                 baseline_auc_t = binary_auc_safe(y_te_t, probs_t, log_on_fail=False)
                 if not np.isnan(baseline_auc_t):
                     n_tcn_feats = X_te_t.shape[2]
