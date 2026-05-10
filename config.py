@@ -185,18 +185,13 @@ SECTOR_WINSORIZE = True
 # ── Feature config (10 active features including momentum + Context features) ────────────────
 SEQ_LEN               = 30
 
-# Global feature computation flags — control what features.py computes.
-# Must be True if ANY model uses those features.
-MARKET_FEATURES_ENABLED = True   # LR/RF/XGBoost + LSTM all use market features
-SECTOR_FEATURES_ENABLED = True   # LSTM uses sector features; True so they get computed
+# Feature computation flags — control what features.py computes.
+# Market features (L2) are needed by all models in both universes.
+# Sector context features (L3) are needed by LSTM in both universes.
+MARKET_FEATURES_ENABLED = True
+SECTOR_FEATURES_ENABLED = True
 
-# Per-model feature flags — control which features each model actually receives
-BASELINE_MARKET_FEATURES_ENABLED = True   # LR, RF, XGBoost use market features
-BASELINE_SECTOR_FEATURES_ENABLED = False  # LR, RF, XGBoost do NOT use sector features
-LSTM_MARKET_FEATURES_ENABLED = True       # LSTM uses market features
-LSTM_SECTOR_FEATURES_ENABLED = True       # LSTM uses sector features
-
-# Master feature union: all features used by at least one model
+# Master feature union: all features used by at least one model in the active universe
 ALL_FEATURE_COLS = [
     "Return_1d",        # LSTM, Baselines
     "Return_5d",        # LSTM, Baselines (weekly momentum)
@@ -268,18 +263,27 @@ _CORE_FEATURE_COLS = [
     "SectorRelReturn",
 ]
 
-LSTM_B_FEATURE_COLS = list(_CORE_FEATURE_COLS)
-if LSTM_MARKET_FEATURES_ENABLED:
-    LSTM_B_FEATURE_COLS.extend(_MARKET_FEATURE_COLS)
-if LSTM_SECTOR_FEATURES_ENABLED:
-    LSTM_B_FEATURE_COLS.extend(_SECTOR_FEATURE_COLS)
+# Feature layer assignments per universe:
+#   L1 = core technical features (_CORE_FEATURE_COLS)
+#   L2 = market context features (_MARKET_FEATURE_COLS)
+#   L3 = sector context features (_SECTOR_FEATURE_COLS)
+#
+#   Model          Large Cap   Small Cap
+#   LR/RF/XGBoost  L1+L2       L1
+#   LSTM           L1+L2+L3    L1+L2+L3
+#   TCN            L1+L2       L1+L2   (via TCN_FEATURE_SET_DEFAULT = "core_market")
 
-# Baselines (LR, RF, XGBoost): market features only, no sector features
-BASELINE_FEATURE_COLS = list(_CORE_FEATURE_COLS)
-if BASELINE_MARKET_FEATURES_ENABLED:
-    BASELINE_FEATURE_COLS.extend(_MARKET_FEATURE_COLS)
-if BASELINE_SECTOR_FEATURES_ENABLED:
-    BASELINE_FEATURE_COLS.extend(_SECTOR_FEATURE_COLS)
+_LARGE_CAP_BASELINE_FEATURE_COLS = list(_CORE_FEATURE_COLS) + list(_MARKET_FEATURE_COLS)
+_LARGE_CAP_LSTM_FEATURE_COLS     = list(_CORE_FEATURE_COLS) + list(_MARKET_FEATURE_COLS) + list(_SECTOR_FEATURE_COLS)
+_SMALL_CAP_BASELINE_FEATURE_COLS = list(_CORE_FEATURE_COLS)
+_SMALL_CAP_LSTM_FEATURE_COLS     = list(_CORE_FEATURE_COLS) + list(_MARKET_FEATURE_COLS) + list(_SECTOR_FEATURE_COLS)
+
+if UNIVERSE_MODE == "large_cap":
+    BASELINE_FEATURE_COLS = _LARGE_CAP_BASELINE_FEATURE_COLS
+    LSTM_B_FEATURE_COLS   = _LARGE_CAP_LSTM_FEATURE_COLS
+else:
+    BASELINE_FEATURE_COLS = _SMALL_CAP_BASELINE_FEATURE_COLS
+    LSTM_B_FEATURE_COLS   = _SMALL_CAP_LSTM_FEATURE_COLS
 
 # Trading
 K_STOCKS = 5   # Long top-5, short bottom-5 per day
@@ -350,7 +354,7 @@ TUNE_USE_FROZEN_HPS = False
 # False → skip; saves ~(n_features × 2 × n_folds) inference passes — useful for
 #         speed runs when importances are not needed.
 # Baseline importances (LR coefficients, RF MDI, XGBoost gain) are always saved.
-COMPUTE_PERMUTATION_IMPORTANCE = False
+COMPUTE_PERMUTATION_IMPORTANCE = True
 
 LSTM_B_HYPERPARAM_GRID = {
     "optimizer": ["adam", "nadam"],
@@ -411,7 +415,7 @@ TCN_ARCH_GRID = {                        # Phase 2 (architecture + feature set)
     "num_channels": [[16, 16, 16], [32, 32, 32], [32, 32, 32, 32]],
     "kernel_size":  [3, 5],
     "dropout":      [0.1, 0.2, 0.3],
-    "feature_set":  ["core_market", "full"],
+    "feature_set":  ["core_market"],
 }
 TCN_TUNE_REPLICATES = 1
 TCN_TUNE_PATIENCE   = 4
@@ -468,8 +472,8 @@ MODELS = ['LR', 'RF', 'XGBoost', 'LSTM', 'TCN']
 LARGE_CAP_CONFIG = UniverseConfig(
     name="large_cap",
     tickers=LARGE_CAP_TICKERS,
-    baseline_feature_cols=BASELINE_FEATURE_COLS,
-    lstm_b_feature_cols=LSTM_B_FEATURE_COLS,
+    baseline_feature_cols=_LARGE_CAP_BASELINE_FEATURE_COLS,
+    lstm_b_feature_cols=_LARGE_CAP_LSTM_FEATURE_COLS,
     invert_signals=True,
     sector_min_size=3,
     sector_winsorize=True,
@@ -482,8 +486,8 @@ LARGE_CAP_CONFIG = UniverseConfig(
 SMALL_CAP_CONFIG = UniverseConfig(
     name="small_cap",
     tickers=SMALL_CAP_TICKERS,
-    baseline_feature_cols=BASELINE_FEATURE_COLS,   # existing, momentum-flavored
-    lstm_b_feature_cols=LSTM_B_FEATURE_COLS,       # existing
+    baseline_feature_cols=_SMALL_CAP_BASELINE_FEATURE_COLS,
+    lstm_b_feature_cols=_SMALL_CAP_LSTM_FEATURE_COLS,
     invert_signals=False,
     sector_min_size=3,
     sector_winsorize=False,   # preserve extreme signals in small-cap
