@@ -10,6 +10,7 @@ __pycache__/
 data/
 reports/
 reports_exp/
+figures/
 __pycache__/config.cpython-314.pyc
 backtest/__pycache__/signals.cpython-314.pyc
 __pycache__/config.cpython-314.pyc
@@ -37,3 +38,9 @@ figures/F12_ablation_feature_layer.pdf
 .gitignore
 .gitignore
 figures/F12_ablation_feature_layer.png
+figures/F7_largecap_cumret.pdf
+figures/F7_largecap_cumret.pdf
+figures/F10_subperiod_bar.png
+figures/F10_subperiod_bar.png
+figures/F10_subperiod_bar.png
+figures/F10_subperiod_bar.pdf

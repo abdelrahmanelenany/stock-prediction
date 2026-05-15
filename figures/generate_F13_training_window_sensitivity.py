@@ -1,6 +1,7 @@
 """Generate Figure F13: Training Window Sensitivity Chart."""
 
 import numpy as np
+import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -26,27 +27,42 @@ matplotlib.rcParams.update({
     "ps.fonttype": 42,
 })
 
-# --- Data ---
+# --- Load data from results files ---
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPORTS = os.path.join(REPO_ROOT, "reports")
+REPORTS_EXP = os.path.join(REPO_ROOT, "reports_exp")
+
+# (label, large-cap file, small-cap file)
+WINDOW_FILES = [
+    (
+        "252d",
+        os.path.join(REPORTS, "large_cap_table_T5_net_returns_5bps.csv"),
+        os.path.join(REPORTS, "small_cap_table_T5_net_returns_5bps.csv"),
+    ),
+    (
+        "504d",
+        os.path.join(REPORTS_EXP, "train_504", "large_cap_table_T5_net_returns_5bps_500d.csv"),
+        os.path.join(REPORTS_EXP, "train_504", "small_cap_table_T5_net_returns_5bps_500d.csv"),
+    ),
+    (
+        "756d",
+        os.path.join(REPORTS_EXP, "train_756", "large_cap_table_T5_net_returns_5bps_756d.csv"),
+        os.path.join(REPORTS_EXP, "train_756", "small_cap_table_T5_net_returns_5bps_756d.csv"),
+    ),
+]
+
 models = ["LR", "RF", "XGBoost", "LSTM", "TCN", "Ensemble"]
-windows = ["252d", "500d", "756d"]
+windows = [label for label, _, _ in WINDOW_FILES]
 
-large_cap = {
-    "LR":       [0.180,  0.075,  0.509],
-    "RF":       [0.268,  0.227,  0.785],
-    "XGBoost":  [0.080, -0.188,  0.706],
-    "LSTM":     [0.364, -0.169, -0.084],
-    "TCN":      [0.000, -0.069,  0.078],
-    "Ensemble": [0.699,  0.267, -0.139],
-}
+large_cap: dict[str, list[float]] = {m: [] for m in models}
+small_cap: dict[str, list[float]] = {m: [] for m in models}
 
-small_cap = {
-    "LR":       [ 0.172, -0.362, -0.502],
-    "RF":       [-0.087, -0.564,  0.414],
-    "XGBoost":  [-0.182, -0.281, -0.289],
-    "LSTM":     [ 0.350, -0.632,  0.300],
-    "TCN":      [ 0.412, -0.410, -0.909],
-    "Ensemble": [ 0.031, -0.153,  0.276],
-}
+for label, lc_path, sc_path in WINDOW_FILES:
+    for universe_dict, path in ((large_cap, lc_path), (small_cap, sc_path)):
+        df = pd.read_csv(path)
+        sharpe_by_model = dict(zip(df["Model"], df["Sharpe Ratio"]))
+        for m in models:
+            universe_dict[m].append(sharpe_by_model.get(m, float("nan")))
 
 # --- Visual design ---
 # 252d: solid dark blue (primary); 500d: muted teal; 756d: warm orange

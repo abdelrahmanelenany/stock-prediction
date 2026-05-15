@@ -5,7 +5,7 @@ Generate Figure F15 — TCN Architecture Sweep.
           Col 1 = Scatter (receptive field vs val Sharpe)
           Col 2 = Heatmap (kernel_size × num_levels, split by channel width)
 
-Data is hardcoded — no CSV files are read.
+Data is loaded from reports/{universe}_tcn_arch_sweep.csv.
 """
 
 import os
@@ -29,67 +29,53 @@ matplotlib.rcParams.update({
     "figure.dpi": 150,
 })
 
+REPORTS_DIR = "reports"
 OUT_DIR = "outputs/figures"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
-# ── Hardcoded sweep data ──────────────────────────────────────────────────────
+# ── Load sweep data from CSVs ─────────────────────────────────────────────────
 
-COLS = ["kernel_size", "num_levels", "num_channels", "receptive_field",
-        "val_sharpe", "val_auc", "n_params"]
+_RENAME = {
+    "kernel":   "kernel_size",
+    "levels":   "num_levels",
+    "channels": "num_channels",
+    "params":   "n_params",
+}
 
-_LC = [
-    (2, 4, 32,  31, -2.102, 0.500527,  16898),
-    (2, 4, 64,  31, -1.333, 0.522513,  62466),
-    (2, 5, 32,  63, -1.114, 0.498762,  21058),
-    (2, 5, 64,  63, -0.487, 0.529887,  78978),
-    (3, 4, 32,  61, -2.217, 0.540114,  24802),
-    (3, 4, 64,  61, -0.256, 0.519940,  92610),
-    (3, 5, 32, 125, -1.586, 0.523534,  31010),
-    (3, 5, 64, 125, -1.473, 0.579356, 117314),
-    (5, 3, 32,  57, -0.773, 0.522545,  30306),
-    (5, 3, 64,  57, -2.050, 0.558688, 111810),
-    (5, 4, 32, 121, -3.295, 0.543261,  40610),
-    (5, 4, 64, 121,  0.185, 0.530830, 152898),   # SELECTED
-    (5, 5, 32, 249, -2.709, 0.538039,  50914),
-    (5, 5, 64, 249, -4.189, 0.535094, 193986),
-]
 
-_SC = [
-    (2, 4, 32,  31, -4.254, 0.386096,  16898),
-    (2, 4, 64,  31, -2.170, 0.469633,  62466),
-    (2, 5, 32,  63, -6.563, 0.471428,  21058),
-    (2, 5, 64,  63, -3.106, 0.477176,  78978),
-    (3, 4, 32,  61, -4.473, 0.447754,  24802),
-    (3, 4, 64,  61, -4.516, 0.473688,  92610),
-    (3, 5, 32, 125, -2.427, 0.479024,  31010),
-    (3, 5, 64, 125, -1.581, 0.489335, 117314),
-    (5, 3, 32,  57, -2.621, 0.427924,  30306),
-    (5, 3, 64,  57,  0.090, 0.546277, 111810),   # SELECTED
-    (5, 4, 32, 121, -2.677, 0.458185,  40610),
-    (5, 4, 64, 121, -0.588, 0.487320, 152898),
-    (5, 5, 32, 249,  0.001, 0.455992,  50914),
-    (5, 5, 64, 249, -4.087, 0.428816, 193986),
-]
+def _load_sweep(universe: str) -> pd.DataFrame:
+    path = os.path.join(REPORTS_DIR, f"{universe}_tcn_arch_sweep.csv")
+    df = pd.read_csv(path)
+    df = df.rename(columns=_RENAME)
+    for col in ("kernel_size", "num_levels", "num_channels",
+                "receptive_field", "n_params"):
+        df[col] = pd.to_numeric(df[col])
+    df["val_sharpe"] = pd.to_numeric(df["val_sharpe"])
+    df["val_auc"]    = pd.to_numeric(df["val_auc"])
+    return df
 
-LC_DF = pd.DataFrame(_LC, columns=COLS)
-SC_DF = pd.DataFrame(_SC, columns=COLS)
+
+LC_DF = _load_sweep("large_cap")
+SC_DF = _load_sweep("small_cap")
 
 LC_SEL = LC_DF.loc[LC_DF["val_sharpe"].idxmax()]
 SC_SEL = SC_DF.loc[SC_DF["val_sharpe"].idxmax()]
 
 # ── Visual constants ──────────────────────────────────────────────────────────
 
-KERNELS  = [2, 3, 5]
-CHANNELS = [32, 64]
-LEVELS   = [5, 4, 3]          # heatmap rows, top → bottom
+# Derived from the union of both datasets so the grid is consistent
+_all = pd.concat([LC_DF, SC_DF], ignore_index=True)
+KERNELS  = sorted(_all["kernel_size"].unique().tolist())
+CHANNELS = sorted(_all["num_channels"].unique().tolist())
+LEVELS   = sorted(_all["num_levels"].unique().tolist(), reverse=True)  # top → bottom
 
 KERNEL_COLORS = {2: "#4393c3", 3: "#e08048", 5: "#4dac26"}
 CHAN_MARKER   = {32: "o", 64: "s"}
 CHAN_SIZE     = {32: 70,  64: 100}
 SEL_COLOR     = "#b2182b"
 
-# Column index mapping for the 6-column heatmap grid
+# Column index mapping for the heatmap grid
 COL_IDX = {(k, c): ki * len(CHANNELS) + ci
            for ki, k in enumerate(KERNELS)
            for ci, c in enumerate(CHANNELS)}

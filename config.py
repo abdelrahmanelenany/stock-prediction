@@ -170,6 +170,7 @@ LSTM_OVERFIT_WARN_epochs = 6
 
 # LSTM LR grid for experiments/lstm_lr_sweep.py (single value = no sweep)
 LSTM_LR_GRID = [0.0005, 0.001, 0.003, 0.005]
+LSTM_HIDDEN_SWEEP_GRID = [32, 64]
 LSTM_LR_SWEEP_MAX_EPOCHS = 40  # capped budget for experiments/lstm_lr_sweep.py
 
 # Market/sector feature horizons (used in pipeline/features.py)
@@ -354,7 +355,7 @@ TUNE_USE_FROZEN_HPS = True
 # False → skip; saves ~(n_features × 2 × n_folds) inference passes — useful for
 #         speed runs when importances are not needed.
 # Baseline importances (LR coefficients, RF MDI, XGBoost gain) are always saved.
-COMPUTE_PERMUTATION_IMPORTANCE = False
+COMPUTE_PERMUTATION_IMPORTANCE = True
 
 LSTM_B_HYPERPARAM_GRID = {
     "optimizer": ["adam", "nadam"],

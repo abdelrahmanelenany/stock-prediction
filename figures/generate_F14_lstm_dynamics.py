@@ -39,37 +39,66 @@ os.makedirs(OUT_DIR, exist_ok=True)
 # ─── helpers ────────────────────────────────────────────────────────────────
 
 def load_training_log(universe: str) -> pd.DataFrame:
-    """Load the sweep-best training log for a universe."""
-    # Prefer the dedicated sweep-best file
+    """Load the sweep-best training log for a universe.
+
+    Preference order:
+      1. {universe}_lstm_sweep_best_training_log.csv  (dedicated sweep artifact)
+      2. fold0_lstm.csv                               (fold 0 — same fold used by the sweep)
+      3. Any *lstm*.csv in training_logs/
+    """
     candidate = os.path.join(TRAINING_LOG_DIR, f"{universe}_lstm_sweep_best_training_log.csv")
     if os.path.isfile(candidate):
         df = pd.read_csv(candidate)
-        if df.empty:
-            raise FileNotFoundError(f"Training log exists but is empty: {candidate}")
-        return df
+        if not df.empty:
+            return _normalise_log_columns(df)
 
-    # Fall back: glob for any lstm CSV with the universe prefix
-    pattern = os.path.join(TRAINING_LOG_DIR, f"{universe}*lstm*.csv")
-    matches = glob.glob(pattern)
+    # Fall back to fold 0 log — the sweep always runs on fold 0
+    fold0 = os.path.join(TRAINING_LOG_DIR, "fold0_lstm.csv")
+    if os.path.isfile(fold0):
+        df = pd.read_csv(fold0)
+        if not df.empty:
+            return _normalise_log_columns(df)
+
+    # Last resort: any lstm CSV in the directory
+    pattern = os.path.join(TRAINING_LOG_DIR, "*lstm*.csv")
+    matches = sorted(glob.glob(pattern))
     if not matches:
         raise FileNotFoundError(
             f"No LSTM training log found for universe '{universe}'. "
             f"Expected: {candidate}"
         )
-    df = pd.read_csv(sorted(matches)[0])
+    df = pd.read_csv(matches[0])
     if df.empty:
         raise FileNotFoundError(f"Training log is empty: {matches[0]}")
+    return _normalise_log_columns(df)
+
+
+def _normalise_log_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename columns to the names expected by plot_training_curves."""
+    # The per-fold training logs use 'train_eval_loss'; normalise to 'train_loss'
+    if "train_loss" not in df.columns and "train_eval_loss" in df.columns:
+        df = df.rename(columns={"train_eval_loss": "train_loss"})
     return df
 
 
 def load_tuning_results(universe: str) -> pd.DataFrame:
-    path = os.path.join(REPORTS_DIR, f"{universe}_lstm_tuning_results.csv")
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"Tuning results not found: {path}")
-    df = pd.read_csv(path)
-    if df.empty:
-        raise FileNotFoundError(f"Tuning results file is empty: {path}")
-    return df
+    """Load sweep/tuning results, trying multiple candidate filenames."""
+    candidates = [
+        os.path.join(REPORTS_DIR, f"{universe}_lstm_tuning_results.csv"),
+        os.path.join(REPORTS_DIR, f"{universe}_lstm_hp_sweep.csv"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            df = pd.read_csv(path)
+            if not df.empty:
+                # Ensure n_epochs_trained exists (sweep uses 'max_epochs')
+                if "n_epochs_trained" not in df.columns and "max_epochs" in df.columns:
+                    df = df.rename(columns={"max_epochs": "n_epochs_trained"})
+                return df
+    raise FileNotFoundError(
+        f"No LSTM tuning results found for universe '{universe}'. "
+        f"Tried: {candidates}"
+    )
 
 
 def best_config(tuning_df: pd.DataFrame) -> pd.Series:

@@ -29,11 +29,57 @@ from models.tcn_model import (
     predict_tcn,
     tcn_receptive_field,
 )
+from models.lstm_model import align_predictions_to_df
+from backtest.signals import (
+    smooth_probabilities,
+    generate_signals,
+    apply_holding_period_constraint,
+)
+from backtest.portfolio import compute_portfolio_returns
+from backtest.metrics import compute_metrics
 from evaluation.metrics_utils import binary_auc_safe
 
 
 def _count_params(model: TCNModel) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def _score_on_val(df_v: pd.DataFrame, probs_val, keys_val, prob_col: str) -> float:
+    """Compute net Sharpe on the walk-forward val window using the full signals pipeline."""
+    universe_cfg = (
+        config.LARGE_CAP_CONFIG
+        if config.UNIVERSE_MODE == 'large_cap'
+        else config.SMALL_CAP_CONFIG
+    )
+    preds = df_v.copy().reset_index(drop=True)
+    preds[prob_col] = align_predictions_to_df(probs_val, keys_val, df_v)
+    valid = preds.dropna(subset=[prob_col]).copy()
+    if len(valid) == 0:
+        return float('nan')
+    smoothed = smooth_probabilities(
+        valid, prob_col,
+        alpha=getattr(config, 'SIGNAL_SMOOTH_ALPHA', 0.0),
+        ema_method=getattr(config, 'SIGNAL_EMA_METHOD', 'alpha'),
+        ema_span=getattr(config, 'SIGNAL_EMA_SPAN', None),
+    )
+    sig_df, _ = generate_signals(
+        smoothed,
+        k=config.K_STOCKS,
+        prob_col=f'{prob_col}_Smooth',
+        return_diagnostics=True,
+    )
+    sig_df = apply_holding_period_constraint(
+        sig_df, min_hold_days=getattr(config, 'MIN_HOLDING_DAYS', 5)
+    )
+    port = compute_portfolio_returns(
+        sig_df,
+        tc_bps=config.TC_BPS,
+        k=config.K_STOCKS,
+        slippage_bps=getattr(config, 'SLIPPAGE_BPS', 0.0),
+        invert_signals=universe_cfg.invert_signals,
+    )
+    met = compute_metrics(port['Net_Return'])
+    return float(met['Sharpe Ratio'])
 
 
 def main() -> None:
@@ -61,7 +107,7 @@ def main() -> None:
     df_test_fold = df_ts.copy()
 
     val_ratio = getattr(config, 'TCN_VAL_SPLIT', 0.2)
-    X_tr, y_tr, X_val, y_val, X_te, y_te, _, _, _ = prepare_tcn_sequences_temporal_split(
+    X_tr, y_tr, X_val, y_val, X_te, y_te, _, keys_val, _ = prepare_tcn_sequences_temporal_split(
         df_train_fold, df_test_fold,
         feature_cols=feature_cols,
         val_ratio=val_ratio,
@@ -107,6 +153,7 @@ def main() -> None:
                 probs_te = predict_tcn(model, X_te, device)
                 vauc = binary_auc_safe(y_val, probs_val, log_on_fail=False)
                 tauc = binary_auc_safe(y_te, probs_te, log_on_fail=False)
+                val_sharpe = _score_on_val(df_v, probs_val, keys_val, 'Prob_TCN')
                 n_params = _count_params(model)
 
                 row = {
@@ -115,9 +162,10 @@ def main() -> None:
                     'channels': ch,
                     'receptive_field': rf,
                     'viable': viable,
-                    'params': n_params,
+                    'val_sharpe': round(val_sharpe, 3),
                     'val_auc': vauc,
                     'test_auc': tauc,
+                    'params': n_params,
                     'train_time_s': round(elapsed, 2),
                 }
                 rows.append(row)
@@ -125,21 +173,21 @@ def main() -> None:
                 print(
                     f'[{done:>2}/{total}] k={kernel} L={levels} ch={ch:<3}  '
                     f'RF={rf:<4} {viable_tag:<18}  '
-                    f'val_auc={vauc:.4f}  test_auc={tauc:.4f}  '
-                    f't={elapsed:.1f}s  params={n_params:,}'
+                    f'val_sharpe={val_sharpe:.3f}  val_auc={vauc:.4f}  '
+                    f'test_auc={tauc:.4f}  t={elapsed:.1f}s  params={n_params:,}'
                 )
 
     os.makedirs('reports', exist_ok=True)
-    path = os.path.join('reports', 'tcn_arch_sweep.csv')
+    path = os.path.join('reports', f'{config.UNIVERSE_MODE}_tcn_arch_sweep.csv')
     pd.DataFrame(rows).to_csv(path, index=False)
     print(f'\nSaved {path}')
 
-    # Print summary of viable combinations sorted by val_auc
+    # Print summary of viable combinations sorted by val_sharpe
     df_res = pd.DataFrame(rows)
-    viable_df = df_res[df_res['viable']].sort_values('val_auc', ascending=False)
+    viable_df = df_res[df_res['viable']].sort_values('val_sharpe', ascending=False)
     if len(viable_df):
-        print('\nTop viable combinations by val_auc:')
-        print(viable_df[['kernel', 'levels', 'channels', 'receptive_field', 'params', 'val_auc', 'test_auc', 'train_time_s']].head(10).to_string(index=False))
+        print('\nTop viable combinations by val_sharpe:')
+        print(viable_df[['kernel', 'levels', 'channels', 'receptive_field', 'val_sharpe', 'val_auc', 'test_auc', 'params', 'train_time_s']].head(10).to_string(index=False))
     else:
         print('\nNo viable combinations found (all RF < seq_len).')
 

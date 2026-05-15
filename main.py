@@ -174,7 +174,7 @@ def save_all_results(
     # LSTM Tuning Results (Bhandari §3.3 Tables)
     if tuning_results and len(tuning_results) > 0:
         pd.DataFrame(tuning_results).to_csv(
-            f'{reports_dir}/{prefix}_lstm_tuning_results.csv', index=False
+            f'{reports_dir}/{prefix}_tuning_results.csv', index=False
         )
 
     # Raw daily returns

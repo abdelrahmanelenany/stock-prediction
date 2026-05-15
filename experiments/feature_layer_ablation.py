@@ -1,7 +1,7 @@
 # ==============================================================
 # EDIT THESE TWO LINES TO SELECT WHAT TO RUN
 # ==============================================================
-ABLATION_CONDITION = "L1_L2_L3"   # "L1_only" | "L1_L2" | "L1_L2_L3"
+ABLATION_CONDITION = "L1_L2"   # "L1_only" | "L1_L2" | "L1_L2_L3"
 UNIVERSE_MODE      = "small_cap" # "large_cap" | "small_cap"
 # ==============================================================
 
@@ -130,9 +130,21 @@ INVERT_SIGNALS = universe_cfg.invert_signals
 K_STOCKS       = universe_cfg.k_stocks
 
 # ── Feature layer derivation (programmatic from config, no hardcoding) ───────
+# Use the full L1+L2+L3 pool for both model types so that every condition
+# (L1_only / L1_L2 / L1_L2_L3) resolves to a distinct feature set regardless
+# of what the universe config restricts baselines to by default.
+# This does NOT affect the main pipeline — only this ablation script reads these lists.
 
-baseline_all_cols = list(universe_cfg.baseline_feature_cols)
-lstm_all_cols     = list(universe_cfg.lstm_b_feature_cols)
+baseline_all_cols = (
+    list(config._CORE_FEATURE_COLS)
+    + list(config._MARKET_FEATURE_COLS)
+    + list(config._SECTOR_FEATURE_COLS)
+)
+lstm_all_cols = (
+    list(config._CORE_FEATURE_COLS)
+    + list(config._MARKET_FEATURE_COLS)
+    + list(config._SECTOR_FEATURE_COLS)
+)
 
 baseline_l1, baseline_l2, baseline_l3 = _classify_features(baseline_all_cols)
 lstm_l1,     lstm_l2,     lstm_l3     = _classify_features(lstm_all_cols)

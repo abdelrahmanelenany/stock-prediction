@@ -1,15 +1,27 @@
 """Generate Figure F9 — AMH Regime Comparison (Net Sharpe by Universe)."""
 
 import os
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
 OUT_DIR = os.path.dirname(__file__)
+REPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "reports")
 
 MODELS = ["LR", "RF", "XGBoost", "LSTM", "TCN", "Ensemble"]
-LARGE_CAP = [0.18, 0.268, 0.08, 0.364, 0.00, 0.699]
-SMALL_CAP  = [0.172, -0.087, -0.182, 0.350, 0.412, 0.031]
+
+
+def _load_sharpe(universe: str) -> list:
+    path = os.path.join(REPORTS_DIR, f"{universe}_table_T5_net_returns_5bps.csv")
+    df = pd.read_csv(path)
+    df["Model"] = df["Model"].str.strip()
+    sharpe_map = df.set_index("Model")["Sharpe Ratio"].to_dict()
+    return [float(sharpe_map[m]) for m in MODELS]
+
+
+LARGE_CAP = _load_sharpe("large_cap")
+SMALL_CAP = _load_sharpe("small_cap")
 
 COLOR_LARGE = "#1f77b4"
 COLOR_SMALL = "#ff7f0e"
@@ -46,8 +58,7 @@ ax.set_xticks(x)
 ax.set_xticklabels(MODELS, fontsize=10)
 ax.set_ylabel("Net Sharpe Ratio (annualised)", fontsize=10)
 ax.set_title(
-    "Figure F9 — AMH Regime Comparison: Net Sharpe by Universe\n"
-    "(TC = 5 bps per half-turn; Ensemble = LR + LSTM + TCN)",
+    "Figure F9 — AMH Regime Comparison: Net Sharpe by Universe\n",
     fontsize=10,
 )
 ax.yaxis.set_major_formatter(mticker.FormatStrFormatter("%.2f"))
