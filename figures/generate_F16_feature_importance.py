@@ -10,75 +10,51 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 # ---------------------------------------------------------------------------
-# Data
+# Load data from reports/
 # ---------------------------------------------------------------------------
 
-large_cap_data = {
-    "Feature": [
-        "BB_PctB", "Beta_60d", "Market_Return_1d", "Market_Return_21d",
-        "Market_Return_5d", "Market_Vol_20d", "Market_Vol_60d", "RSI_14",
-        "RealVol_20d", "RelToMarket_1d", "RelToMarket_21d", "RelToMarket_5d",
-        "Return_1d", "Return_21d", "Return_5d", "SectorRelReturn", "Volume_Ratio",
-    ],
-    "LR_coef":      [0.07974, 0.21162, 0.00899, 0.02553, 0.01207, 0.05695,
-                     0.01510, 0.07530, 0.16727, 0.02659, 0.09323, 0.05572,
-                     0.01466, 0.06505, 0.03809, 0.02793, 0.02618],
-    "RF_importance":[0.03584, 0.22068, 0.01366, 0.04337, 0.02577, 0.07390,
-                     0.10558, 0.05270, 0.11479, 0.01977, 0.08607, 0.04038,
-                     0.01907, 0.06613, 0.03536, 0.01879, 0.02814],
-    "XGB_gain":     [0.04425, 0.14007, 0.03067, 0.05883, 0.04835, 0.07097,
-                     0.09391, 0.05649, 0.08600, 0.02951, 0.07931, 0.04936,
-                     0.03161, 0.06652, 0.04625, 0.03062, 0.03726],
-    "LSTM_B_perm":  [0.07495, 0.08132, 0.02697, 0.02126, 0.02098, 0.03470,
-                     0.01284, 0.03790, 0.07238, 0.03961, 0.06561, 0.05610,
-                     0.03224, 0.06164, 0.03035, 0.02930, 0.01881],
-    "TCN_perm":     [0.07791, 0.07656, 0.02805, 0.03247, 0.02067, 0.02650,
-                     0.01793, 0.09244, 0.06245, 0.04335, 0.05134, 0.04809,
-                     0.02984, 0.07514, 0.03173, 0.01300, 0.04156],
-}
+REPORTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "reports"
+)
 
-small_cap_data = {
-    "Feature": [
-        "BB_PctB", "Beta_60d", "Market_Return_1d", "Market_Return_21d",
-        "Market_Return_5d", "Market_Vol_20d", "Market_Vol_60d", "RSI_14",
-        "RealVol_20d", "RelToMarket_1d", "RelToMarket_21d", "RelToMarket_5d",
-        "Return_1d", "Return_21d", "Return_5d", "SectorRelReturn", "Volume_Ratio",
-    ],
-    "LR_coef":      [0.07661, 0.20066, 0.00819, 0.01584, 0.01581, 0.03980,
-                     0.01377, 0.08004, 0.17870, 0.02414, 0.07057, 0.03540,
-                     0.01812, 0.06120, 0.02936, 0.04975, 0.08205],
-    "RF_importance":[0.03794, 0.18395, 0.01566, 0.05265, 0.02354, 0.07512,
-                     0.09689, 0.05439, 0.14057, 0.02278, 0.07561, 0.03500,
-                     0.02134, 0.07215, 0.03514, 0.02733, 0.02991],
-    "XGB_gain":     [0.04491, 0.11211, 0.03439, 0.06585, 0.03805, 0.07888,
-                     0.08630, 0.05649, 0.10242, 0.03909, 0.06733, 0.04458,
-                     0.03651, 0.06518, 0.04740, 0.04201, 0.03849],
-    "LSTM_B_perm":  [0.03027, 0.04777, 0.01623, 0.05395, 0.03314, 0.08434,
-                     0.06354, 0.05754, 0.08216, 0.02482, 0.05933, 0.01851,
-                     0.01225, 0.03715, 0.02391, 0.02528, 0.05174],
-    "TCN_perm":     [0.04805, 0.08708, 0.03505, 0.04583, 0.08693, 0.01876,
-                     0.02658, 0.01969, 0.11445, 0.01548, 0.04862, 0.03372,
-                     0.02616, 0.05212, 0.04401, 0.02165, 0.03403],
-}
+def load_importance_csv(universe_key: str) -> dict:
+    path = os.path.join(REPORTS_DIR, f"{universe_key}_feature_importances_avg.csv")
+    df = pd.read_csv(path)
+    # NaN means the feature was not in that model's feature set; treat as 0 for ranking
+    df = df.fillna(0.0)
+    result = {"Feature": df["Feature"].tolist()}
+    for col in ["LR_coef", "RF_importance", "XGB_gain", "LSTM_B_perm", "TCN_perm"]:
+        result[col] = df[col].tolist()
+    return result
+
+large_cap_data = load_importance_csv("large_cap")
+small_cap_data = load_importance_csv("small_cap")
 
 display_names = {
-    "Beta_60d":          "Beta (60d)",
-    "RealVol_20d":       "Realized Vol (20d)",
-    "Market_Vol_60d":    "Market Vol (60d)",
-    "Market_Vol_20d":    "Market Vol (20d)",
-    "RelToMarket_21d":   "Rel-to-Mkt (21d)",
-    "RSI_14":            "RSI (14)",
-    "BB_PctB":           "BB %B",
-    "Return_21d":        "Return (21d)",
-    "RelToMarket_5d":    "Rel-to-Mkt (5d)",
-    "RelToMarket_1d":    "Rel-to-Mkt (1d)",
-    "Return_5d":         "Return (5d)",
-    "Volume_Ratio":      "Volume Ratio",
-    "Market_Return_21d": "Mkt Return (21d)",
-    "Market_Return_5d":  "Mkt Return (5d)",
-    "SectorRelReturn":   "Sector Rel Return",
-    "Return_1d":         "Return (1d)",
-    "Market_Return_1d":  "Mkt Return (1d)",
+    "Beta_60d":            "Beta (60d)",
+    "RealVol_20d":         "Realized Vol (20d)",
+    "Market_Vol_60d":      "Market Vol (60d)",
+    "Market_Vol_20d":      "Market Vol (20d)",
+    "RelToMarket_21d":     "Rel-to-Mkt (21d)",
+    "RSI_14":              "RSI (14)",
+    "BB_PctB":             "BB %B",
+    "Return_21d":          "Return (21d)",
+    "RelToMarket_5d":      "Rel-to-Mkt (5d)",
+    "RelToMarket_1d":      "Rel-to-Mkt (1d)",
+    "Return_5d":           "Return (5d)",
+    "Volume_Ratio":        "Volume Ratio",
+    "Market_Return_21d":   "Mkt Return (21d)",
+    "Market_Return_5d":    "Mkt Return (5d)",
+    "SectorRelReturn":     "Sector Rel Return",
+    "Return_1d":           "Return (1d)",
+    "Market_Return_1d":    "Mkt Return (1d)",
+    "Sector_Return_1d":    "Sector Ret (1d)",
+    "Sector_Return_5d":    "Sector Ret (5d)",
+    "Sector_Return_21d":   "Sector Ret (21d)",
+    "Sector_Vol_20d":      "Sector Vol (20d)",
+    "Sector_Vol_60d":      "Sector Vol (60d)",
+    "SectorRelZ_Return_1d":"Sector RelZ (1d)",
 }
 
 models = [
@@ -98,17 +74,12 @@ universes = [
 # Sanity checks
 # ---------------------------------------------------------------------------
 
-EXPECTED_FEATURES = set(large_cap_data["Feature"])
 print("=" * 60)
 print("SANITY CHECKS")
 print("=" * 60)
 
 for univ_key, data, univ_label in universes:
-    features_present = set(data["Feature"])
-    assert features_present == EXPECTED_FEATURES, (
-        f"[{univ_key}] Feature mismatch: {features_present.symmetric_difference(EXPECTED_FEATURES)}"
-    )
-    print(f"\n[{univ_label}] All {len(features_present)} features confirmed present.")
+    print(f"\n[{univ_label}] {len(data['Feature'])} features loaded.")
     for model_key, col, model_title, _, _ in models:
         df = pd.DataFrame({"Feature": data["Feature"], "score": data[col]})
         top3 = df.nlargest(3, "score")

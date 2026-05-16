@@ -1042,26 +1042,32 @@ def run_walk_forward_pipeline(
         all_preds.append(pred)
 
     # ── Save feature importances — all models in one file (Task 5) ──────────
-    if feat_imp_records:
-        fi_per_fold = pd.DataFrame(feat_imp_records)
+    if feat_imp_records or lstm_perm_records or tcn_perm_records:
+        # Build baseline frame (may be empty if RUN_BASELINES=False)
+        fi_per_fold = pd.DataFrame(feat_imp_records) if feat_imp_records else pd.DataFrame(
+            columns=['Fold', 'Feature', 'LR_coef', 'RF_importance', 'XGB_gain']
+        )
 
-        # Merge LSTM permutation importance (same feature set, join on Fold+Feature)
+        # Outer-join LSTM permutation importance so L2/L3 features exclusive to
+        # LSTM appear as rows (baselines get NaN for those features).
         if lstm_perm_records:
             lstm_df = pd.DataFrame(lstm_perm_records)
-            fi_per_fold = fi_per_fold.merge(lstm_df, on=['Fold', 'Feature'], how='left')
+            fi_per_fold = fi_per_fold.merge(lstm_df, on=['Fold', 'Feature'], how='outer')
         else:
             fi_per_fold['LSTM_B_perm'] = np.nan
 
-        # Merge TCN permutation importance. TCN may use a subset of features
-        # (e.g. 'core' set from tuning), so NaN is expected for features absent
-        # from the chosen set on a given fold.
+        # Outer-join TCN permutation importance for the same reason.
         if tcn_perm_records:
             tcn_df = pd.DataFrame(tcn_perm_records)
-            fi_per_fold = fi_per_fold.merge(tcn_df, on=['Fold', 'Feature'], how='left')
+            fi_per_fold = fi_per_fold.merge(tcn_df, on=['Fold', 'Feature'], how='outer')
         else:
             fi_per_fold['TCN_perm'] = np.nan
 
         imp_cols = ['LR_coef', 'RF_importance', 'XGB_gain', 'LSTM_B_perm', 'TCN_perm']
+        for col in imp_cols:
+            if col not in fi_per_fold.columns:
+                fi_per_fold[col] = np.nan
+
         fi_per_fold.to_csv(
             f'{reports_dir}/{config.UNIVERSE_MODE}_feature_importances_per_fold.csv',
             index=False,
